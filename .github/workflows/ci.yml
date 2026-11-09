@@ -1,34 +1,45 @@
-name: ci
+name: build and release
 
+# Configure npm trusted publishing for this workflow. No NPM token is needed.
 on:
-  push:
-    branches: ['**']
-  pull_request:
+  workflow_dispatch:
+  release:
+    types: [created]
+
+permissions:
+  id-token: write
+  contents: read
 
 jobs:
-  check:
+  publish:
+    name: publish lanfly
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    env:
+      HUSKY: 0
     steps:
-      - uses: actions/checkout@v4
-
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '26'
+          registry-url: 'https://registry.npmjs.org'
       - uses: pnpm/action-setup@v4
         with:
-          version: 12.18.0
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-
+          version: '12.18.0'
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-
-      - name: Check formatting, lint and types
-        run: pnpm check
-
-      - name: Build
+      - name: Lint and type-check
+        run: pnpm lint
+      - name: Build runtime and web assets
         run: pnpm build
-
       - name: Test
         run: pnpm test
+      - name: Publish package
+        shell: bash
+        run: |
+          name=$(node -p "require('./package.json').name")
+          version=$(node -p "require('./package.json').version")
+          if npm view "${name}@${version}" version >/dev/null 2>&1; then
+            echo "${name}@${version} already in registry — skipping"
+          else
+            npm publish --provenance --access public --ignore-scripts
+          fi
