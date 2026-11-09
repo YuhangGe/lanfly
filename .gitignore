@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+*.tsbuildinfo
+.vite/
+
+# Local package output
+*.tgz
+.npm-cache/
+
+# Local test output
+.tmp/
+test-results/
+coverage/
+
+# Logs
+*.log
+pnpm-debug.log*
+
+# Editor and OS files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+*.swp
+*.swo

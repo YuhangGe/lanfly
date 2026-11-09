@@ -1,0 +1,28 @@
+{
+  "name": "@lanfly/webui",
+  "version": "0.1.0",
+  "private": true,
+  "description": "lanfly 浏览器界面",
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit && vite build",
+    "dev": "vite",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@lanfly/common": "workspace:*",
+    "jinge": "4.2.2",
+    "superjson": "^2.2.6"
+  },
+  "devDependencies": {
+    "@iconify-json/codicon": "^1.2.77",
+    "@iconify/tailwind4": "^1.2.3",
+    "@tailwindcss/vite": "^4.3.5",
+    "@types/node": "^26.6.6",
+    "jinge-compiler": "4.2.1",
+    "tailwindcss": "^4.3.5",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.7"
+  }
+}

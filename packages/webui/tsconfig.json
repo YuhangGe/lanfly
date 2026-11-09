@@ -1,0 +1,21 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "jsx": "preserve",
+    "moduleDetection": "force",
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedSideEffectImports": true,
+    "types": ["vite/client", "node"],
+    "paths": {
+      "@lanfly/common": ["../common/src/index.ts"],
+      "@lanfly/common/*": ["../common/src/*"],
+      "@server": ["../server/src/actions/index.ts"],
+      "@/*": ["./src/*"]
+    }
+  },
+  "include": ["src", "vite.config.ts", "script"]
+}

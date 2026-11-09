@@ -1,0 +1,211 @@
+import {
+  PEER_HELLO_PATH,
+  PEER_INFO_PATH,
+  PEER_MESSAGES_PATH,
+  PEER_TRANSFERS_PATH,
+  peerInfoSchema,
+  peerTransferPath,
+  REQUEST_TIMEOUT_MS,
+  type PeerInfo,
+  type TransferOfferPayload,
+} from '@lanfly/common';
+import http, { type ClientRequest } from 'node:http';
+
+import type { Identity } from './identity';
+
+import { ErrorCodes, throwActionError } from '../core/errors';
+import { createSignedHeaders, type Room } from '../core/security';
+import { logger } from '../logger';
+
+export interface PeerTarget {
+  host: string;
+  port: number;
+}
+
+export interface UploadResponse {
+  status: number;
+  body: string;
+}
+
+export interface PendingUpload {
+  request: ClientRequest;
+  done: Promise<UploadResponse>;
+}
+
+function formatHost(host: string): string {
+  return host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
+}
+
+function responseError(status: number): never {
+  if (status === 401 || status === 403) throwActionError(ErrorCodes.PEER_UNAUTHORIZED);
+  throwActionError(ErrorCodes.PEER_HTTP_ERROR);
+}
+
+export class RemoteClient {
+  constructor(
+    private readonly identity: Identity,
+    private readonly room: Room | undefined,
+  ) {}
+
+  async info(target: PeerTarget, timeoutMs = 5_000): Promise<PeerInfo> {
+    const data = await this.#requestJson(target, 'GET', PEER_INFO_PATH, undefined, timeoutMs);
+    return parsePeerInfo(data);
+  }
+
+  async hello(target: PeerTarget): Promise<PeerInfo> {
+    const data = await this.#requestJson(target, 'POST', PEER_HELLO_PATH, {
+      from: this.identity.info,
+    });
+    if (typeof data !== 'object' || data === null || !('info' in data)) {
+      throwActionError(ErrorCodes.PEER_PROTOCOL);
+    }
+    return parsePeerInfo((data as { info: unknown }).info);
+  }
+
+  async sendMessage(target: PeerTarget, payload: Record<string, unknown>): Promise<void> {
+    await this.#requestJson(target, 'POST', PEER_MESSAGES_PATH, payload);
+  }
+
+  async offerTransfer(target: PeerTarget, payload: TransferOfferPayload): Promise<string> {
+    const data = await this.#requestJson(target, 'POST', PEER_TRANSFERS_PATH, payload);
+    if (
+      typeof data !== 'object' ||
+      data === null ||
+      !('token' in data) ||
+      typeof (data as { token: unknown }).token !== 'string'
+    ) {
+      throwActionError(ErrorCodes.PEER_PROTOCOL);
+    }
+    return (data as { token: string }).token;
+  }
+
+  openUpload(target: PeerTarget, transferId: string, token: string, size: number): PendingUpload {
+    let resolveDone: (value: UploadResponse) => void;
+    let rejectDone: (error: unknown) => void;
+    const done = new Promise<UploadResponse>((resolve, reject) => {
+      resolveDone = resolve;
+      rejectDone = reject;
+    });
+
+    const request = http.request(
+      {
+        hostname: target.host,
+        port: target.port,
+        path: peerTransferPath(transferId),
+        method: 'PUT',
+        agent: false,
+        headers: {
+          'content-type': 'application/octet-stream',
+          'content-length': String(size),
+          'x-lanfly-id': this.identity.id,
+          'x-lanfly-transfer-token': token,
+        },
+      },
+      (response) => {
+        const chunks: Buffer[] = [];
+        let length = 0;
+        response.on('data', (chunk: Buffer) => {
+          length += chunk.length;
+          if (length <= 64 * 1024) chunks.push(chunk);
+        });
+        response.on('end', () => {
+          resolveDone({
+            status: response.statusCode ?? 0,
+            body: Buffer.concat(chunks).toString('utf8'),
+          });
+        });
+      },
+    );
+
+    request.setTimeout(60_000, () => {
+      request.destroy(new Error('peer upload idle timeout'));
+    });
+    request.on('error', (error) => {
+      logger.debug(`上传到 ${target.host}:${target.port} 失败: ${String(error)}`);
+      rejectDone(error);
+    });
+    return { request, done };
+  }
+
+  async #requestJson(
+    target: PeerTarget,
+    method: 'GET' | 'POST',
+    path: string,
+    payload: unknown,
+    timeoutMs = REQUEST_TIMEOUT_MS,
+  ): Promise<unknown> {
+    const body = payload === undefined ? Buffer.alloc(0) : Buffer.from(JSON.stringify(payload));
+    const signed = createSignedHeaders(this.room, this.identity.id, { method, path, body });
+    const headers: Record<string, string> = {
+      'x-lanfly-id': this.identity.id,
+      ...signed,
+    };
+    if (body.length) {
+      headers['content-type'] = 'application/json';
+      headers['content-length'] = String(body.length);
+    }
+
+    const init: RequestInit = {
+      method,
+      headers,
+      redirect: 'error',
+      signal: AbortSignal.timeout(timeoutMs),
+    };
+    if (body.length) init.body = body;
+
+    let response: Response;
+    try {
+      response = await fetch(`http://${formatHost(target.host)}:${target.port}${path}`, init);
+    } catch (error) {
+      logger.debug(`请求 ${target.host}:${target.port}${path} 失败: ${String(error)}`);
+      throwActionError(ErrorCodes.PEER_UNREACHABLE);
+    }
+
+    const text = await response.text();
+    if (!response.ok) {
+      logger.debug(
+        `请求 ${target.host}:${target.port}${path} 返回 ${response.status}: ${text.slice(0, 200)}`,
+      );
+      responseError(response.status);
+    }
+    try {
+      return JSON.parse(text) as unknown;
+    } catch {
+      throwActionError(ErrorCodes.PEER_PROTOCOL);
+    }
+  }
+}
+
+function parsePeerInfo(value: unknown): PeerInfo {
+  const parsed = peerInfoSchema.safeParse(value);
+  if (!parsed.success) throwActionError(ErrorCodes.PEER_PROTOCOL);
+  return parsed.data;
+}
+
+export function parsePeerAddress(
+  input: string,
+  defaultPort: number,
+): { host: string; port: number } {
+  const trimmed = input.trim();
+  if (!trimmed) throwActionError(ErrorCodes.ADDRESS_INVALID);
+  const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
+  let url: URL;
+  try {
+    url = new URL(withScheme);
+  } catch {
+    throwActionError(ErrorCodes.ADDRESS_INVALID);
+  }
+  if (url.protocol !== 'http:') {
+    throwActionError(ErrorCodes.ADDRESS_INVALID);
+  }
+  if (url.pathname !== '/' || url.search || url.hash) {
+    throwActionError(ErrorCodes.ADDRESS_INVALID);
+  }
+  const host = url.hostname.replace(/^\[(.*)\]$/, '$1');
+  if (!host) throwActionError(ErrorCodes.ADDRESS_INVALID);
+  const port = url.port ? Number(url.port) : defaultPort;
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throwActionError(ErrorCodes.ADDRESS_INVALID);
+  }
+  return { host, port };
+}

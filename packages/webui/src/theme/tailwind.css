@@ -1,0 +1,166 @@
+@import 'tailwindcss';
+@plugin "@iconify/tailwind4";
+
+:root {
+  --ui-black: #000000;
+  --ui-white: #ffffff;
+  --ui-neutral-0: #121212;
+  --ui-neutral-10: #181818;
+  --ui-neutral-20: #1e1e1e;
+  --ui-neutral-30: #252526;
+  --ui-neutral-40: #2d2d30;
+  --ui-neutral-50: #37373d;
+  --ui-neutral-60: #454545;
+  --ui-neutral-70: #626262;
+  --ui-neutral-80: #858585;
+  --ui-neutral-90: #a3a3a3;
+  --ui-neutral-100: #cccccc;
+  --ui-neutral-110: #eeeeee;
+  --ui-neutral-120: #ffffff;
+  --ui-blue-10: #12344d;
+  --ui-blue-20: #264f78;
+  --ui-blue-30: #0078d4;
+  --ui-blue-40: #69b7ff;
+  --ui-blue-50: #9cdcfe;
+  --ui-green-10: #1f3526;
+  --ui-green-30: #54865b;
+  --ui-green-40: #89d185;
+  --ui-amber-10: #3b2d19;
+  --ui-amber-30: #b8893c;
+  --ui-amber-40: #e5c07b;
+  --ui-red-10: #3f2020;
+  --ui-red-30: #b33e3e;
+  --ui-red-40: #f48771;
+  --ui-red-50: #f5cccc;
+}
+
+@theme {
+  --color-*: initial;
+  --spacing: 4px;
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --font-mono: 'SFMono-Regular', Consolas, monospace;
+  --radius-control: 4px;
+  --radius-popup: 7px;
+  --radius-dialog: 10px;
+  --shadow-toolbar: 0 3px 12px rgb(0 0 0 / 40%);
+  --shadow-menu: 0 5px 18px rgb(0 0 0 / 50%);
+  --shadow-dialog: 0 20px 80px rgb(0 0 0 / 55%);
+  --shadow-bubble: 0 1px 2px rgb(0 0 0 / 25%);
+}
+
+@theme inline {
+  --color-black: var(--ui-black);
+  --color-white: var(--ui-white);
+  --color-neutral-0: var(--ui-neutral-0);
+  --color-neutral-10: var(--ui-neutral-10);
+  --color-neutral-20: var(--ui-neutral-20);
+  --color-neutral-30: var(--ui-neutral-30);
+  --color-neutral-40: var(--ui-neutral-40);
+  --color-neutral-50: var(--ui-neutral-50);
+  --color-neutral-60: var(--ui-neutral-60);
+  --color-neutral-70: var(--ui-neutral-70);
+  --color-neutral-80: var(--ui-neutral-80);
+  --color-neutral-90: var(--ui-neutral-90);
+  --color-neutral-100: var(--ui-neutral-100);
+  --color-neutral-110: var(--ui-neutral-110);
+  --color-neutral-120: var(--ui-neutral-120);
+  --color-blue-10: var(--ui-blue-10);
+  --color-blue-20: var(--ui-blue-20);
+  --color-blue-30: var(--ui-blue-30);
+  --color-blue-40: var(--ui-blue-40);
+  --color-blue-50: var(--ui-blue-50);
+  --color-green-10: var(--ui-green-10);
+  --color-green-30: var(--ui-green-30);
+  --color-green-40: var(--ui-green-40);
+  --color-amber-10: var(--ui-amber-10);
+  --color-amber-30: var(--ui-amber-30);
+  --color-amber-40: var(--ui-amber-40);
+  --color-red-10: var(--ui-red-10);
+  --color-red-30: var(--ui-red-30);
+  --color-red-40: var(--ui-red-40);
+  --color-red-50: var(--ui-red-50);
+}
+
+@layer base {
+  :root {
+    color-scheme: dark;
+    font-family: var(--font-sans);
+    font-size: 13px;
+    color: var(--ui-neutral-100);
+    background: var(--ui-neutral-10);
+  }
+  * {
+    box-sizing: border-box;
+  }
+  html,
+  body {
+    margin: 0;
+    height: 100%;
+    overflow: hidden;
+  }
+  button,
+  input,
+  textarea {
+    font: inherit;
+  }
+  button {
+    border: 0;
+    background: transparent;
+    color: inherit;
+  }
+  textarea {
+    resize: none;
+  }
+  code {
+    font-family: var(--font-mono);
+  }
+  ::-webkit-scrollbar {
+    width: 9px;
+    height: 9px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--ui-white) 14%, transparent);
+    border-radius: 9px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in srgb, var(--ui-white) 22%, transparent);
+  }
+  ::selection {
+    background: color-mix(in srgb, var(--ui-blue-30) 55%, transparent);
+  }
+}
+
+@keyframes lanfly-rise {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes lanfly-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.message-enter {
+  animation: lanfly-rise 0.16s ease-out both;
+}
+
+.typing-dot {
+  animation: lanfly-pulse 1.1s ease-in-out infinite;
+}
+
+.dialog::backdrop {
+  background: rgb(0 0 0 / 55%);
+  backdrop-filter: blur(3px);
+}

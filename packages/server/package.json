@@ -1,0 +1,19 @@
+{
+  "name": "@lanfly/server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "lanfly 本地服务、组播发现、聊天与文件传输",
+  "type": "module",
+  "scripts": {
+    "dev": "bun script/bundle.ts --dev",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@lanfly/common": "workspace:*",
+    "@types/node": "^26.6.6",
+    "esbuild": "^0.28.2",
+    "superjson": "^2.2.6",
+    "typescript": "^7.0.2",
+    "zod": "^4.6.7"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node", "bun"],
+    "paths": {
+      "@lanfly/common": ["../common/src/index.ts"],
+      "@lanfly/common/*": ["../common/src/*"],
+      "@/*": ["./src/*"]
+    }
+  },
+  "include": ["src/**/*.ts", "script/**/*.ts", "test/**/*.ts"]
+}

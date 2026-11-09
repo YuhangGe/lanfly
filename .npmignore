@@ -1,0 +1,6 @@
+# 发布包只包含构建产物，源码和开发脚本留在仓库里
+packages/
+script/
+.github/
+node_modules/
+*.tgz
