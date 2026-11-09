@@ -2,14 +2,6 @@
   "name": "lanfly",
   "version": "0.1.2",
   "description": "A lightweight LAN messenger and file-transfer tool with automatic peer discovery.",
-  "homepage": "https://github.com/YuhangGe/lanfly",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/YuhangGe/lanfly.git"
-  },
-  "bugs": {
-    "url": "https://github.com/YuhangGe/lanfly/issues"
-  },
   "keywords": [
     "chat",
     "discovery",
@@ -17,7 +9,15 @@
     "lan",
     "localsend"
   ],
+  "homepage": "https://github.com/YuhangGe/lanfly",
+  "bugs": {
+    "url": "https://github.com/YuhangGe/lanfly/issues"
+  },
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/YuhangGe/lanfly.git"
+  },
   "bin": {
     "lanfly": "dist/cli.js"
   },
@@ -35,9 +35,8 @@
     "dev": "bun script/dev.ts",
     "dev:server": "bun run --cwd packages/server dev",
     "dev:web": "bun run --cwd packages/webui dev",
-    "format": "oxfmt .",
-    "format:check": "oxfmt --check .",
-    "lint": "oxlint --type-aware .",
+    "lint": "tsc -b && oxfmt --check . && oxlint --type-aware .",
+    "lint-fix": "oxlint --type-aware . --fix && oxfmt .",
     "pack:local": "bun run build && bun pm pack",
     "prepublishOnly": "bun run check && bun run build",
     "start": "bun dist/cli.js",
