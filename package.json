@@ -2,6 +2,14 @@
   "name": "lanfly",
   "version": "0.1.1",
   "description": "A lightweight LAN messenger and file-transfer tool with automatic peer discovery.",
+  "homepage": "https://github.com/YuhangGe/lanfly",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/YuhangGe/lanfly.git"
+  },
+  "bugs": {
+    "url": "https://github.com/YuhangGe/lanfly/issues"
+  },
   "keywords": [
     "chat",
     "discovery",
