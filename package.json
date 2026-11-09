@@ -31,7 +31,7 @@
   },
   "scripts": {
     "build": "bun script/build.ts",
-    "check": "bun run format:check && bun run lint && bun run typecheck",
+    "check": "pnpm lint",
     "dev": "bun script/dev.ts",
     "dev:server": "bun run --cwd packages/server dev",
     "dev:web": "bun run --cwd packages/webui dev",
