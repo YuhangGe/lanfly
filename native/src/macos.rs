@@ -32,6 +32,7 @@ struct Rect {
 
 #[link(name = "ApplicationServices", kind = "framework")]
 unsafe extern "C" {
+    fn AXIsProcessTrusted() -> bool;
     fn CGPreflightListenEventAccess() -> bool;
     fn CGPreflightPostEventAccess() -> bool;
     fn CGRequestListenEventAccess() -> bool;
@@ -77,6 +78,7 @@ unsafe extern "C" {
 #[link(name = "CoreFoundation", kind = "framework")]
 unsafe extern "C" {
     static kCFBooleanTrue: Ref;
+    fn CFMachPortInvalidate(port: Ref);
     fn CFMachPortCreateRunLoopSource(allocator: Ref, port: Ref, order: isize) -> Ref;
     fn CFRunLoopGetCurrent() -> Ref;
     fn CFRunLoopAddSource(run_loop: Ref, source: Ref, mode: Ref);
@@ -229,7 +231,7 @@ impl Default for State {
     }
 }
 static STATE: OnceLock<Mutex<State>> = OnceLock::new();
-static THREAD: OnceLock<Result<(), String>> = OnceLock::new();
+static THREAD: crate::startup::RetryOnce = crate::startup::RetryOnce::new();
 fn state() -> &'static Mutex<State> {
     STATE.get_or_init(|| Mutex::new(State::default()))
 }
@@ -239,9 +241,40 @@ fn screens() -> u32 {
     let result = unsafe { CGGetActiveDisplayList(0, null_mut(), &mut count) };
     if result == 0 { count } else { 0 }
 }
+// A temporary keyboard tap tests the current process without posting input or
+// intercepting events: it is never attached to a run loop and is invalidated immediately.
+extern "C" fn permission_probe(_proxy: Ref, _kind: u32, event: Ref, _user: Ref) -> Ref {
+    event
+}
+fn probe_keyboard_access(options: u32) -> bool {
+    unsafe {
+        let tap = CGEventTapCreate(
+            0,
+            0,
+            options,
+            (1 << 10) | (1 << 11),
+            permission_probe,
+            null_mut(),
+        );
+        if tap.is_null() {
+            return false;
+        }
+        CFMachPortInvalidate(tap);
+        CFRelease(tap);
+        true
+    }
+}
+fn permissions_status() -> (bool, bool) {
+    // Preflight checks may lag behind System Settings. A newly created filtering
+    // tap requires Accessibility; a listen-only keyboard tap checks monitoring access.
+    let accessibility =
+        unsafe { AXIsProcessTrusted() || CGPreflightPostEventAccess() } || probe_keyboard_access(0);
+    let monitoring = unsafe { CGPreflightListenEventAccess() } || probe_keyboard_access(1);
+    (accessibility, monitoring)
+}
 pub fn status() -> Value {
-    json!({ "screens": screens(), "accessibility": unsafe { CGPreflightPostEventAccess() },
-        "inputMonitoring": unsafe { CGPreflightListenEventAccess() } })
+    let (accessibility, input_monitoring) = permissions_status();
+    json!({ "screens": screens(), "accessibility": accessibility, "inputMonitoring": input_monitoring })
 }
 pub fn permissions() {
     unsafe {
@@ -304,7 +337,7 @@ pub fn stop() {
     s.queue.clear();
 }
 
-fn thread_main(ready: mpsc::SyncSender<Result<(), String>>) {
+fn thread_main(ready: mpsc::SyncSender<Result<(), String>>, activate: mpsc::Receiver<()>) {
     unsafe {
         // A session tap can swallow clicks/keys after WindowServer already moved
         // the hardware cursor. Filter at the HID entry point instead.
@@ -322,7 +355,13 @@ fn thread_main(ready: mpsc::SyncSender<Result<(), String>>) {
         let mode =
             CFStringCreateWithCString(null_mut(), c"kCFRunLoopDefaultMode".as_ptr(), 0x08000100);
         CFRunLoopAddSource(CFRunLoopGetCurrent(), source, mode);
-        let _ = ready.send(Ok(()));
+        if ready.send(Ok(())).is_err() || activate.recv().is_err() {
+            CFMachPortInvalidate(tap);
+            CFRelease(source);
+            CFRelease(tap);
+            CFRelease(mode);
+            return;
+        }
         loop {
             CFRunLoopRunInMode(mode, 0.05, false);
             let mut s = state().lock().unwrap();
@@ -354,19 +393,23 @@ pub fn start(role: &str, edge: &str) -> Result<(), String> {
     if screens() != 1 {
         return Err("INPUT_SINGLE_SCREEN".into());
     }
-    if unsafe { !CGPreflightPostEventAccess() || !CGPreflightListenEventAccess() } {
+    let (accessibility, monitoring) = permissions_status();
+    if !accessibility || !monitoring {
         return Err("INPUT_PERMISSION".into());
     }
     if role == "server" && !BackgroundCursor::enable() {
         return Err("INPUT_CURSOR_CAPTURE".into());
     }
-    let result = THREAD.get_or_init(|| {
+    THREAD.initialize(|| {
         let (tx, rx) = mpsc::sync_channel(1);
-        std::thread::spawn(move || thread_main(tx));
+        let (activate, activation) = mpsc::channel();
+        std::thread::spawn(move || thread_main(tx, activation));
         rx.recv_timeout(Duration::from_secs(2))
-            .unwrap_or(Err("INPUT_NATIVE_ERROR".into()))
-    });
-    result.clone()?;
+            .unwrap_or(Err("INPUT_NATIVE_ERROR".into()))?;
+        activate
+            .send(())
+            .map_err(|_| "INPUT_NATIVE_ERROR".to_string())
+    })?;
     let mut s = state().lock().unwrap();
     release(&mut s);
     s.server = role == "server";

@@ -9,6 +9,7 @@ import {
   inputForget,
   inputPairing,
   inputPermissions,
+  inputRefresh,
   inputStatus,
 } from '@server';
 import { onMount, vm } from 'jinge';
@@ -158,6 +159,13 @@ export default function InputSharingDialog(props: {
                   {model.status.inputMonitoring ? '已授权' : '未授权'} · 显示器：
                   {model.status.screens} 个
                 </div>
+                <Button
+                  variant="secondary"
+                  disabled={model.busy}
+                  on:click={() => void run(() => inputRefresh({ toastError: false }))}
+                >
+                  刷新权限
+                </Button>
                 {model.status.screens !== 1 && (
                   <p className="mb-0 text-red-40">暂不支持多显示器，请断开外接显示器后重试。</p>
                 )}
@@ -165,7 +173,7 @@ export default function InputSharingDialog(props: {
                   <div className="mt-2 flex flex-col items-start gap-2">
                     <span>
                       请在“系统设置 → 隐私与安全性”中授权运行 lanfly 的终端或 Node
-                      进程。授权后可能需要重启 lanfly。
+                      进程。授权后点击“刷新权限”，即可继续配置，无需重启 lanfly。
                     </span>
                     <Button
                       variant="secondary"

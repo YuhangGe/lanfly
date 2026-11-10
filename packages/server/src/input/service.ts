@@ -101,6 +101,12 @@ export class InputService {
       if (this.#native) {
         try {
           Object.assign(this.#status, JSON.parse(this.#native.status()) as NativeStatus);
+          if (
+            this.#status.error === 'INPUT_PERMISSION' &&
+            this.#status.accessibility &&
+            this.#status.inputMonitoring
+          )
+            this.#status.error = undefined;
         } catch {
           this.#status.error = 'INPUT_NATIVE_ERROR';
         }
@@ -120,6 +126,13 @@ export class InputService {
     if (!this.#initialized) throwActionError('INPUT_CONFIG_ERROR');
     if (s.screens !== 1) throwActionError('INPUT_SINGLE_SCREEN');
     if (!s.accessibility || !s.inputMonitoring) throwActionError('INPUT_PERMISSION');
+  }
+
+  refresh(): InputStatus {
+    const status = this.status();
+    if (status.accessibility && status.inputMonitoring && !status.enabled) this.resume();
+    this.#publish();
+    return this.status();
   }
 
   permissions(): InputStatus {

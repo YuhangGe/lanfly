@@ -41,6 +41,7 @@ export const cancelTransfer = defineAction(transferIdInput, async (context, inpu
 export const openDownloads = defineAction(async (context) => context.app.openDownloads());
 
 export const inputStatus = defineAction(async ({ app }) => app.input.status());
+export const inputRefresh = defineAction(async ({ app }) => app.input.refresh());
 export const inputPermissions = defineAction(async ({ app }) => app.input.permissions());
 export const inputConfigure = defineAction(inputSettingsSchema, async ({ app }, settings) =>
   app.input.configure(settings),
@@ -66,6 +67,7 @@ export const actions = {
   cancelTransfer,
   openDownloads,
   inputStatus,
+  inputRefresh,
   inputPermissions,
   inputConfigure,
   inputEnable,

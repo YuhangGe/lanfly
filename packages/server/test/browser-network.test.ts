@@ -233,7 +233,13 @@ describe('browser devices and one-hop routing', () => {
     await expect(join(a.app, 'phone')).rejects.toThrow('401');
     const token = randomToken();
     const phone = await join(a.app, 'iOS', 'secret', token);
-    for (const action of ['inputEnable', 'openDownloads', 'connectPeer', 'forgetPeer']) {
+    for (const action of [
+      'inputEnable',
+      'inputRefresh',
+      'openDownloads',
+      'connectPeer',
+      'forgetPeer',
+    ]) {
       const response = await fetch(`${base(a.app)}/api/v1/browser/rpc/${action}`, {
         method: 'POST',
         headers: { origin: base(a.app), cookie: phone.cookie! },

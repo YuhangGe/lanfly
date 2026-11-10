@@ -6,6 +6,9 @@ mod cursor;
 #[cfg(any(target_os = "macos", test))]
 mod keyboard;
 
+#[cfg(any(target_os = "macos", test))]
+mod startup;
+
 #[cfg(target_os = "macos")]
 mod macos;
 

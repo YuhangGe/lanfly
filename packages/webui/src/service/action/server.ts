@@ -17,6 +17,7 @@ export const cancelTransfer =
 export const openDownloads =
   rootProxy.openDownloads as unknown as typeof ServerActions.openDownloads;
 export const inputStatus = rootProxy.inputStatus as unknown as typeof ServerActions.inputStatus;
+export const inputRefresh = rootProxy.inputRefresh as unknown as typeof ServerActions.inputRefresh;
 export const inputPermissions =
   rootProxy.inputPermissions as unknown as typeof ServerActions.inputPermissions;
 export const inputConfigure =

@@ -229,6 +229,52 @@ describe('one-to-one input service', () => {
     expect(restarted.native.started).toHaveLength(0);
   });
 
+  it('refreshes newly granted permissions and restores the approved pairing without restarting', async () => {
+    const a = await device('Source');
+    const b = await device('Receiver', 'client');
+    await pair(a, b);
+    await b.close();
+    const restarted = await device('Receiver', 'client', {
+      directory: path.dirname(b.store.file),
+      port: b.target.port,
+      permissions: false,
+    });
+    expect(restarted.service.status().error).toBe('INPUT_PERMISSION');
+    restarted.native.inputMonitoring = false;
+    restarted.native.accessibility = true;
+    expect(restarted.service.refresh().enabled).toBe(false);
+    expect(restarted.service.status().error).toBe('INPUT_PERMISSION');
+    restarted.native.inputMonitoring = true;
+    expect(restarted.service.refresh().enabled).toBe(true);
+    await waitFor(() => restarted.service.status().phase === 'connected');
+    expect(restarted.service.status().error).toBeUndefined();
+    expect(restarted.service.status().pairingCode).toBeUndefined();
+    expect(restarted.store.data?.paired?.key).toBe(a.store.publicKey);
+    const starts = restarted.native.started.length;
+    restarted.service.refresh();
+    expect(restarted.native.started).toHaveLength(starts);
+    await restarted.service.disable();
+    expect(restarted.service.refresh().enabled).toBe(false);
+    expect(restarted.store.data?.autoStart).toBe(false);
+  });
+
+  it('refreshes permissions for a new device without enabling or opening pairing automatically', async () => {
+    const a = await device('Source');
+    a.native.accessibility = false;
+    a.native.inputMonitoring = false;
+    expect(a.service.refresh().accessibility).toBe(false);
+    a.native.accessibility = true;
+    a.native.inputMonitoring = true;
+    expect(a.service.refresh()).toMatchObject({
+      accessibility: true,
+      inputMonitoring: true,
+      enabled: false,
+    });
+    expect(a.service.status().pairingUntil).toBeUndefined();
+    await a.service.enable();
+    expect(a.service.status().enabled).toBe(true);
+  });
+
   it('keeps routing keyboard input to the client across Caps Lock input-source changes', async () => {
     const a = await device('Source');
     const b = await device('Receiver', 'client');
