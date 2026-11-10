@@ -1,7 +1,10 @@
 name: build and release
 
-# Configure npm trusted publishing for this workflow. No NPM token is needed.
+# Configure npm trusted publishing for lanfly and both lanfly-input-* packages.
 on:
+  push:
+    branches: [main, master]
+  pull_request:
   workflow_dispatch:
   release:
     types: [created]
@@ -11,8 +14,8 @@ permissions:
   contents: read
 
 jobs:
-  publish:
-    name: publish lanfly
+  verify:
+    name: check runtime and WebUI
     runs-on: ubuntu-latest
     env:
       HUSKY: 0
@@ -33,6 +36,90 @@ jobs:
         run: pnpm build
       - name: Test
         run: pnpm test
+
+  native:
+    name: build ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: darwin-arm64
+            runner: macos-15
+            target: aarch64-apple-darwin
+          - platform: darwin-x64
+            runner: macos-15-intel
+            target: x86_64-apple-darwin
+    runs-on: ${{ matrix.runner }}
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '12.0'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+          components: rustfmt, clippy
+      - run: cargo fmt --manifest-path native/Cargo.toml --check
+      - run: cargo clippy --manifest-path native/Cargo.toml --locked --all-targets -- -D warnings
+      - run: cargo test --manifest-path native/Cargo.toml --locked
+      - run: cargo build --manifest-path native/Cargo.toml --locked --release --target ${{ matrix.target }}
+      - name: Prepare Node-API binary
+        run: cp native/target/${{ matrix.target }}/release/liblanfly_input.dylib platform/${{ matrix.platform }}/index.node
+      - name: Smoke-test Node loading without requesting permissions
+        run: node -e 'const n=require("./platform/${{ matrix.platform }}"); JSON.parse(n.status()); n.stop()'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-${{ matrix.platform }}
+          path: platform/${{ matrix.platform }}/index.node
+
+  publish-native:
+    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+    needs: [verify, native]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        platform: [darwin-arm64, darwin-x64]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '26'
+          registry-url: 'https://registry.npmjs.org'
+      - uses: actions/download-artifact@v4
+        with:
+          name: native-${{ matrix.platform }}
+          path: platform/${{ matrix.platform }}
+      - run: cp LICENSE platform/${{ matrix.platform }}/LICENSE
+      - name: Publish native package
+        working-directory: platform/${{ matrix.platform }}
+        shell: bash
+        run: |
+          name=$(node -p "require('./package.json').name")
+          version=$(node -p "require('./package.json').version")
+          if npm view "${name}@${version}" version >/dev/null 2>&1; then
+            echo "${name}@${version} already in registry — skipping"
+          else
+            npm publish --provenance --access public --ignore-scripts
+          fi
+
+  publish:
+    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+    needs: [publish-native]
+    name: publish lanfly
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '26'
+          registry-url: 'https://registry.npmjs.org'
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '12.18.0'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
       - name: Publish package
         shell: bash
         run: |

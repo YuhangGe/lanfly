@@ -29,3 +29,8 @@ Thumbs.db
 !.vscode/extensions.json
 *.swp
 *.swo
+
+# Rust input module and precompiled platform packages
+native/target/
+native/index.node
+platform/*/index.node

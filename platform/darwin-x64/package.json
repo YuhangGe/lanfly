@@ -1,0 +1,23 @@
+{
+  "name": "lanfly-input-darwin-x64",
+  "version": "0.2.0",
+  "description": "lanfly native keyboard and mouse sharing for macOS Intel",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/YuhangGe/lanfly.git"
+  },
+  "files": [
+    "index.node"
+  ],
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "main": "index.node",
+  "publishConfig": {
+    "access": "public"
+  }
+}

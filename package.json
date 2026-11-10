@@ -1,6 +1,6 @@
 {
   "name": "lanfly",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "A lightweight LAN messenger and file-transfer tool with automatic peer discovery.",
   "keywords": [
     "chat",
@@ -23,7 +23,8 @@
   },
   "files": [
     "dist",
-    "docs/lanfly.png"
+    "docs/lanfly.png",
+    "changelog.md"
   ],
   "type": "module",
   "publishConfig": {
@@ -31,6 +32,7 @@
   },
   "scripts": {
     "build": "bun script/build.ts",
+    "build:native": "bun script/build-native.ts",
     "check": "pnpm lint",
     "dev": "bun script/dev.ts",
     "dev:server": "bun run --cwd packages/server dev",
@@ -42,7 +44,8 @@
     "start": "bun dist/cli.js",
     "test": "bun test --timeout 30000 packages/server/test",
     "test:watch": "bun test --watch --timeout 30000 packages/server/test",
-    "typecheck": "tsc -p tsconfig.json --noEmit && bun run --cwd packages/common typecheck && bun run --cwd packages/server typecheck && bun run --cwd packages/webui typecheck"
+    "typecheck": "tsc -p tsconfig.json --noEmit && bun run --cwd packages/common typecheck && bun run --cwd packages/server typecheck && bun run --cwd packages/webui typecheck",
+    "version": "bun script/sync-native-version.ts"
   },
   "devDependencies": {
     "@types/bun": "^1.4.4",
@@ -53,6 +56,10 @@
     "oxlint": "^1.92.0",
     "oxlint-tsgolint": "^7.0.2006",
     "typescript": "^7.0.2"
+  },
+  "optionalDependencies": {
+    "lanfly-input-darwin-arm64": "0.2.0",
+    "lanfly-input-darwin-x64": "0.2.0"
   },
   "engines": {
     "node": ">=22"

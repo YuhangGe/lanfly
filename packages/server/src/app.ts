@@ -20,6 +20,7 @@ import { ErrorCodes, errorCode, throwActionError } from './core/errors';
 import { createHttpHandler } from './core/router';
 import { ReplayGuard, randomToken } from './core/security';
 import { MulticastDiscovery } from './discovery/multicast';
+import { InputService } from './input/service';
 import { logger } from './logger';
 import {
   cleanupStaleTempFiles,
@@ -43,6 +44,7 @@ export class Application {
   readonly remote: RemoteClient;
   readonly replayGuard = new ReplayGuard();
   readonly config: ServerConfig;
+  readonly input: InputService;
 
   #server: http.Server | undefined;
   #discovery: MulticastDiscovery | undefined;
@@ -57,9 +59,11 @@ export class Application {
     this.messages = new MessageStore(this.events);
     this.transfers = new TransferStore(this.events);
     this.remote = new RemoteClient(this.identity, this.identity.room);
+    this.input = new InputService(this.identity.name, this.events);
   }
 
   async start(): Promise<number> {
+    await this.input.initialize();
     try {
       await ensureDir(this.identity.downloadsDir);
     } catch (error) {
@@ -67,6 +71,7 @@ export class Application {
       throwActionError(ErrorCodes.DOWNLOAD_DIR_ERROR);
     }
     const server = http.createServer(createHttpHandler(this));
+    server.on('upgrade', (request, socket, head) => this.input.upgrade(request, socket, head));
     server.on('clientError', (_error, socket) => {
       socket.end('HTTP/1.1 400 Bad Request\r\n\r\n');
     });
@@ -100,6 +105,7 @@ export class Application {
   }
 
   async stop(): Promise<void> {
+    this.input.stop();
     if (this.#pruneTimer) clearInterval(this.#pruneTimer);
     if (this.#heartbeatTimer) clearInterval(this.#heartbeatTimer);
     this.#discovery?.stop();

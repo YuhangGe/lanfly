@@ -190,6 +190,13 @@ importers:
       typescript:
         specifier: ^7.0.2
         version: 7.0.2
+    optionalDependencies:
+      lanfly-input-darwin-arm64:
+        specifier: 0.2.0
+        version: link:platform/darwin-arm64
+      lanfly-input-darwin-x64:
+        specifier: 0.2.0
+        version: link:platform/darwin-x64
 
   packages/common:
     dependencies:
@@ -254,6 +261,10 @@ importers:
       vite:
         specifier: ^8.3.7
         version: 8.3.7(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)
+
+  platform/darwin-arm64: {}
+
+  platform/darwin-x64: {}
 
 packages:
 

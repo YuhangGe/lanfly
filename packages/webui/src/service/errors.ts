@@ -2,6 +2,19 @@ import { registerErrorMessages } from './action';
 
 export function registerErrors() {
   registerErrorMessages({
+    INPUT_UNSUPPORTED: '当前系统暂不支持键鼠共享，仅支持 macOS',
+    INPUT_NATIVE_MISSING: '原生组件未安装，请重新安装 lanfly',
+    INPUT_CONFIG_ERROR: '无法读取键鼠配置，请检查配置文件和目录权限',
+    INPUT_SINGLE_SCREEN: '键鼠共享暂时只支持双方各一个显示器',
+    INPUT_PERMISSION: '请先授予辅助功能和输入监控权限，必要时重启 lanfly',
+    INPUT_NOT_READY: '请先选择正确角色并启用共享',
+    INPUT_PAIR_EXPIRED: '配对请求已过期，请重新连接',
+    INPUT_CONNECT_FAILED: '无法连接键鼠服务，请确认对方已启用服务端',
+    INPUT_PEER_CHANGED: '对方身份与已配对设备不同，请核对后解除旧配对再连接',
+    INPUT_START_FAILED: '无法启动键鼠共享，请检查权限、显示器和配置目录权限',
+    INPUT_NATIVE_ERROR: '原生键鼠组件出现异常，共享已停止',
+    INPUT_INTERRUPTED: '显示器发生变化或键鼠处理超时，共享已断开',
+    INPUT_CONNECTION_LOST: '键鼠连接已中断，本机控制已恢复',
     INVALID_INPUT: '请求参数不正确，请刷新页面后重试',
     INTERNAL_ERROR: '本地服务出现异常，请查看终端日志',
     PEER_NOT_FOUND: '设备已离线或不存在',

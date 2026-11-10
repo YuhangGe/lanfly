@@ -5,6 +5,9 @@ import {
   sendFileInput,
   sendMessageInput,
   transferIdInput,
+  inputSettingsSchema,
+  inputConnectSchema,
+  inputConfirmSchema,
 } from '@lanfly/common';
 
 import { defineAction, type ServerAction } from '../core/action';
@@ -37,6 +40,22 @@ export const cancelTransfer = defineAction(transferIdInput, async (context, inpu
 
 export const openDownloads = defineAction(async (context) => context.app.openDownloads());
 
+export const inputStatus = defineAction(async ({ app }) => app.input.status());
+export const inputPermissions = defineAction(async ({ app }) => app.input.permissions());
+export const inputConfigure = defineAction(inputSettingsSchema, async ({ app }, settings) =>
+  app.input.configure(settings),
+);
+export const inputEnable = defineAction(async ({ app }) => app.input.enable());
+export const inputDisable = defineAction(async ({ app }) => app.input.disable());
+export const inputPairing = defineAction(async ({ app }) => app.input.openPairing());
+export const inputConnect = defineAction(inputConnectSchema, async ({ app }, { peerId }) =>
+  app.input.connect(app.peerTarget(peerId)),
+);
+export const inputConfirm = defineAction(inputConfirmSchema, async ({ app }, { code }) =>
+  app.input.confirm(code),
+);
+export const inputForget = defineAction(async ({ app }) => app.input.forget());
+
 export const actions = {
   appState,
   sendMessage,
@@ -46,6 +65,15 @@ export const actions = {
   sendFile,
   cancelTransfer,
   openDownloads,
+  inputStatus,
+  inputPermissions,
+  inputConfigure,
+  inputEnable,
+  inputDisable,
+  inputPairing,
+  inputConnect,
+  inputConfirm,
+  inputForget,
 } satisfies Record<string, ServerAction>;
 
 export type ActionName = keyof typeof actions;

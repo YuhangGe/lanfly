@@ -25,6 +25,7 @@ import type { Toast, UiMessage } from './types';
 import AddPeerDialog from './components/AddPeerDialog';
 import Avatar from './components/Avatar';
 import Button from './components/Button';
+import InputSharingDialog from './components/InputSharingDialog';
 import MessageItem from './components/MessageItem';
 import PeerList from './components/PeerList';
 import Toasts from './components/Toasts';
@@ -77,6 +78,7 @@ export default function App() {
     unread: {} as Record<string, number>,
     dragging: false,
     addOpen: false,
+    inputOpen: false,
     addAddress: '',
     addBusy: false,
     addError: '',
@@ -542,6 +544,18 @@ export default function App() {
           </div>
         )}
         <div className="ml-auto flex items-center gap-1.5">
+          <Button
+            size="compact"
+            variant="ghost"
+            title="键鼠共享"
+            aria-label="键鼠共享"
+            on:click={() => {
+              model.inputOpen = true;
+            }}
+          >
+            <span className="icon-[codicon--remote] text-[14px] sm:mr-1" aria-hidden="true" />
+            <span className="max-[760px]:hidden">键鼠共享</span>
+          </Button>
           <span
             className={`flex items-center gap-1.5 rounded-full border px-2 py-1 text-[10px] ${
               model.connected
@@ -902,6 +916,16 @@ export default function App() {
           onAddress={(value) => (model.addAddress = value)}
           onSubmit={() => void submitAddPeer()}
           onClose={closeAddPeer}
+        />
+      )}
+
+      {model.inputOpen && (
+        <InputSharingDialog
+          peers={model.peers}
+          activePeerId={model.activePeerId}
+          onClose={() => {
+            model.inputOpen = false;
+          }}
         />
       )}
 
