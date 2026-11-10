@@ -446,15 +446,25 @@ export class InputService {
         this.#poll.unref();
       }
       this.#publish();
-    } catch {
-      this.#status.error = 'INPUT_START_FAILED';
-      c.close();
+    } catch (error) {
+      if (error instanceof Error && error.message === 'INPUT_CURSOR_CAPTURE') {
+        this.#status.error = 'INPUT_CURSOR_CAPTURE';
+        this.disable();
+      } else {
+        this.#status.error = 'INPUT_START_FAILED';
+        c.close();
+      }
     }
   }
 
   #drain(c: InputChannel): void {
     try {
-      const events = JSON.parse(this.#native!.poll()) as { kind: string }[];
+      const events = JSON.parse(this.#native!.poll()) as { kind: string; reason?: string }[];
+      if (events.some((e) => e.kind === 'fault' && e.reason === 'cursor')) {
+        this.#status.error = 'INPUT_CURSOR_CAPTURE';
+        this.disable();
+        return;
+      }
       if (events.some((e) => e.kind === 'fault')) {
         this.#status.error = 'INPUT_INTERRUPTED';
         c.close();

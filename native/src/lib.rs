@@ -1,5 +1,11 @@
 use neon::prelude::*;
 
+#[cfg(any(target_os = "macos", test))]
+mod cursor;
+
+#[cfg(any(target_os = "macos", test))]
+mod keyboard;
+
 #[cfg(target_os = "macos")]
 mod macos;
 

@@ -94,6 +94,8 @@ export default function App() {
   const toastTimers = new Set<number>();
   const completedToasts = new Set<string>();
   const failedToasts = new Set<string>();
+  const drafts = new Map<string, string>();
+  let autoSelectFirstPeer = true;
 
   function pushToast(text: string, kind: Toast['kind'] = 'info') {
     const id = (toastSequence += 1);
@@ -141,9 +143,17 @@ export default function App() {
   }
 
   function syncActivePeer() {
-    const peer = model.peers.find((item) => item.id === model.activePeerId);
+    const peer =
+      model.peers.find((item) => item.id === model.activePeerId) ??
+      (autoSelectFirstPeer ? model.peers[0] : undefined);
+    if (peer && peer.id !== model.activePeerId) {
+      selectPeer(peer.id, false);
+      return;
+    }
     if (!peer) {
+      if (model.activePeerId) drafts.set(model.activePeerId, model.draft);
       model.activePeerId = '';
+      model.draft = '';
       model.activePeer = EMPTY_PEER;
       model.activeMessages = [];
       return;
@@ -161,9 +171,6 @@ export default function App() {
       state.transfers.map((transfer) => [transfer.id, transfer]),
     );
     model.loading = false;
-    if (model.activePeerId && !state.peers.some((peer) => peer.id === model.activePeerId)) {
-      model.activePeerId = '';
-    }
     pruneUnread();
     syncActivePeer();
     updateTitle();
@@ -185,33 +192,43 @@ export default function App() {
   function applyPeers(peers: PeerView[]) {
     model.peers = peers;
     model.onlineCount = peers.filter((peer) => peer.online).length;
-    if (model.activePeerId && !peers.some((peer) => peer.id === model.activePeerId)) {
-      model.activePeerId = '';
-    }
     pruneUnread();
     syncActivePeer();
     updateTitle();
   }
 
-  function selectPeer(id: string) {
+  function selectPeer(id: string, focus = true) {
+    if (model.activePeerId !== id) {
+      if (model.activePeerId) drafts.set(model.activePeerId, model.draft);
+      model.draft = drafts.get(id) ?? '';
+    }
+    if (id) autoSelectFirstPeer = true;
     model.activePeerId = id;
     model.unread = { ...model.unread, [id]: 0 };
     syncActivePeer();
     updateTitle();
     void nextTick().then(() => {
       scrollToBottom(true);
-      composer.value?.focus();
+      if (composer.value) {
+        autoGrow(composer.value);
+        if (focus) composer.value.focus();
+      }
     });
   }
 
   function addMessage(message: ChatMessage) {
     if (model.messages.some((item) => item.id === message.id)) return;
     model.messages = [...model.messages, message];
+    if (message.direction === 'in' && model.peers.some((peer) => peer.id === message.peerId)) {
+      selectPeer(message.peerId, false);
+      return;
+    }
     if (message.peerId === model.activePeerId) {
       refreshActiveMessages();
       void nextTick().then(() => scrollToBottom());
       return;
     }
+    if (message.direction === 'out') return;
     model.unread = {
       ...model.unread,
       [message.peerId]: (model.unread[message.peerId] ?? 0) + 1,
@@ -461,13 +478,7 @@ export default function App() {
       pushToast(errorText(error), 'error');
       return;
     }
-    model.peers = model.peers.filter((peer) => peer.id !== peerId);
-    model.onlineCount = model.peers.filter((peer) => peer.online).length;
-    if (model.activePeerId === peerId) {
-      model.activePeerId = '';
-      model.activePeer = EMPTY_PEER;
-      model.activeMessages = [];
-    }
+    applyPeers(model.peers.filter((peer) => peer.id !== peerId));
     pushToast('已移除设备', 'info');
   }
 
@@ -492,9 +503,8 @@ export default function App() {
   }
 
   function backToPeers() {
-    model.activePeerId = '';
-    model.activePeer = EMPTY_PEER;
-    model.activeMessages = [];
+    autoSelectFirstPeer = false;
+    selectPeer('', false);
   }
 
   watch(model, 'activeMessages', () => {

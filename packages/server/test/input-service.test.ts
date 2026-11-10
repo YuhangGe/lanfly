@@ -15,6 +15,7 @@ class FakeNative implements NativeInput {
   screens = 1;
   accessibility = true;
   inputMonitoring = true;
+  startError: string | undefined;
   started: string[][] = [];
   stopped = 0;
   resets = 0;
@@ -29,6 +30,7 @@ class FakeNative implements NativeInput {
   }
   requestPermissions() {}
   start(role: string, edge: string) {
+    if (this.startError) throw new Error(this.startError);
     this.started.push([role, edge]);
   }
   stop() {
@@ -142,6 +144,57 @@ describe('one-to-one input service', () => {
       () => a.service.status().phase === 'connected' && b.service.status().phase === 'connected',
     );
     expect(a.native.started).toHaveLength(2);
+  });
+
+  it('keeps routing keyboard input to the client across Caps Lock input-source changes', async () => {
+    const a = await device('Source');
+    const b = await device('Receiver', 'client');
+    await pair(a, b);
+    const keys = [
+      { kind: 'event', t: 12, key: 0xff, flags: 0x01000080 },
+      { kind: 'event', t: 12, key: 57, flags: 0x00010000 },
+      { kind: 'event', t: 12, key: 57, flags: 0 },
+      { kind: 'event', t: 10, key: 0, flags: 0 },
+      { kind: 'event', t: 11, key: 0, flags: 0 },
+    ];
+    a.native.queue.push({ kind: 'enter', x: 1, y: 0.5 }, ...keys);
+    await waitFor(
+      () => b.native.inputs.filter((event) => event.kind === 'event').length === keys.length,
+    );
+    expect(b.native.inputs.filter((event) => event.kind === 'event')).toEqual(keys);
+    expect(a.service.status().phase).toBe('connected');
+    expect(a.service.status().controlling).toBe(true);
+    expect(b.service.status().phase).toBe('connected');
+  });
+
+  it('stops sharing if native cursor capture cannot start', async () => {
+    const a = await device('Source');
+    const b = await device('Receiver', 'client');
+    a.native.startError = 'INPUT_CURSOR_CAPTURE';
+    a.service.enable();
+    b.service.enable();
+    await b.service.connect(a.target);
+    await waitFor(() => Boolean(a.service.status().pairingCode && b.service.status().pairingCode));
+    const code = a.service.status().pairingCode!;
+    a.service.confirm(code);
+    b.service.confirm(code);
+    await waitFor(() => !a.service.status().enabled);
+    expect(a.service.status().error).toBe('INPUT_CURSOR_CAPTURE');
+    expect(a.service.status().controlling).toBe(false);
+    expect(a.native.started).toHaveLength(0);
+    expect(b.native.inputs.some((e) => e.kind === 'event')).toBe(false);
+  });
+
+  it('disconnects before forwarding input when a cursor capture fails at the edge', async () => {
+    const a = await device('Source');
+    const b = await device('Receiver', 'client');
+    await pair(a, b);
+    a.native.queue.push({ kind: 'fault', reason: 'cursor' }, { kind: 'event', t: 10, key: 12 });
+    await waitFor(() => !a.service.status().enabled);
+    await waitFor(() => b.service.status().phase === 'waiting');
+    expect(a.service.status().error).toBe('INPUT_CURSOR_CAPTURE');
+    expect(a.service.status().controlling).toBe(false);
+    expect(b.native.inputs.some((e) => e.kind === 'event')).toBe(false);
   });
 
   it('rejects a second client and leaves the existing session intact', async () => {

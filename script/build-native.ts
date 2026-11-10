@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { copyFile } from 'node:fs/promises';
+import { copyFile, rename } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -14,8 +14,9 @@ execFileSync(
     env: { ...process.env, MACOSX_DEPLOYMENT_TARGET: '12.0' },
   },
 );
-await copyFile(
-  path.join(root, 'native/target/release/liblanfly_input.dylib'),
-  path.join(root, 'native/index.node'),
-);
+// Keep the old inode intact if a running server still has the addon mapped.
+const output = path.join(root, 'native/index.node');
+const temporary = `${output}.${process.pid}.tmp`;
+await copyFile(path.join(root, 'native/target/release/liblanfly_input.dylib'), temporary);
+await rename(temporary, output);
 console.log('已生成 native/index.node');

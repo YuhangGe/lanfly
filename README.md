@@ -149,6 +149,8 @@ pnpm test       # 单元 + 双实例集成测试
 
 键鼠实现位于 `native/`（Rust/Neon/Quartz）和 `packages/server/src/input/`。本地开发先构建 `native/index.node`；正式包使用 `lanfly-input-darwin-arm64` / `lanfly-input-darwin-x64` 可选依赖。`pnpm build` 仅构建 JS 和 WebUI，不要求在其他系统上编译 Rust。
 
+服务端通过 HID 层事件拦截和后台光标控制锁定本机鼠标。macOS 后台光标控制需要动态解析 WindowServer 的非公开接口；系统不提供该接口或锁定失败时，会停止共享并在 WebUI 提示，不会继续同时移动两端光标。
+
 GitHub Actions 对两个 macOS 架构编译、检查并测试原生模块；JS/WebUI 检查通过后，发布事件依次发布两个原生包和主包。需为三个包配置 npm trusted publishing。发布新版本前运行 `npm version patch`（或指定版本），版本钩子会同步平台包、Cargo 和锁文件中的版本。当前仓库版本若已经发布，需先递增版本再发布包含此功能的新版本。
 
 `pnpm test` 包含使用模拟原生层的双端加密连接测试，不会监听或注入真实键鼠；`cargo test --manifest-path native/Cargo.toml --locked` 检查原生边界逻辑。真实设备验收仍需两台已授权的单屏 Mac，覆盖四个方向切换、修饰键与鼠标释放、滚动、断网、紧急停止及显示器热插拔。

@@ -1,5 +1,7 @@
 //! Quartz events stay on a native run-loop thread. No JS callback runs in an event tap.
 //! A native watchdog restores local input even when Node stops polling or stalls.
+use crate::cursor::{CursorBackend, CursorCapture};
+use crate::keyboard::{FLAGS_MASK, held_key, valid_key};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
@@ -40,7 +42,8 @@ unsafe extern "C" {
     fn CGDisplayHideCursor(display: u32) -> i32;
     fn CGDisplayShowCursor(display: u32) -> i32;
     fn CGWarpMouseCursorPosition(point: Point) -> i32;
-    fn CGAssociateMouseAndMouseCursorPosition(connected: bool) -> i32;
+    // boolean_t is a 32-bit Mach integer, not C/Rust bool.
+    fn CGAssociateMouseAndMouseCursorPosition(connected: i32) -> i32;
     fn CGEventTapCreate(
         tap: u32,
         place: u32,
@@ -73,12 +76,100 @@ unsafe extern "C" {
 }
 #[link(name = "CoreFoundation", kind = "framework")]
 unsafe extern "C" {
+    static kCFBooleanTrue: Ref;
     fn CFMachPortCreateRunLoopSource(allocator: Ref, port: Ref, order: isize) -> Ref;
     fn CFRunLoopGetCurrent() -> Ref;
     fn CFRunLoopAddSource(run_loop: Ref, source: Ref, mode: Ref);
     fn CFRunLoopRunInMode(mode: Ref, seconds: f64, return_after_source: bool) -> i32;
     fn CFStringCreateWithCString(allocator: Ref, value: *const c_char, encoding: u32) -> Ref;
     fn CFRelease(value: Ref);
+}
+
+#[link(name = "System")]
+unsafe extern "C" {
+    fn dlsym(handle: Ref, name: *const c_char) -> Ref;
+}
+
+type DefaultConnection = unsafe extern "C" fn() -> i32;
+type SetConnectionProperty = unsafe extern "C" fn(i32, i32, Ref, Ref) -> i32;
+struct BackgroundCursor {
+    connection: DefaultConnection,
+    set: SetConnectionProperty,
+}
+impl BackgroundCursor {
+    fn enable() -> bool {
+        // Quartz's public hide/detach calls are foreground-oriented. This optional
+        // WindowServer property permits this CLI process to control its cursor in
+        // the background without activating an app or taking keyboard focus.
+        // Resolve at runtime: missing private symbols must not break module loading.
+        static API: OnceLock<Option<BackgroundCursor>> = OnceLock::new();
+        let api = API.get_or_init(|| unsafe {
+            let handle = -2_isize as Ref; // RTLD_DEFAULT on Darwin
+            let connection = dlsym(handle, c"_CGSDefaultConnection".as_ptr());
+            let set = dlsym(handle, c"CGSSetConnectionProperty".as_ptr());
+            if connection.is_null() || set.is_null() {
+                return None;
+            }
+            Some(BackgroundCursor {
+                connection: std::mem::transmute::<Ref, DefaultConnection>(connection),
+                set: std::mem::transmute::<Ref, SetConnectionProperty>(set),
+            })
+        });
+        let Some(api) = api else {
+            return false;
+        };
+        unsafe {
+            let key = CFStringCreateWithCString(
+                null_mut(),
+                c"SetsCursorInBackground".as_ptr(),
+                0x08000100,
+            );
+            if key.is_null() {
+                return false;
+            }
+            let connection = (api.connection)();
+            let result = (api.set)(connection, connection, key, kCFBooleanTrue);
+            CFRelease(key);
+            result == 0
+        }
+    }
+}
+
+struct MacCursor {
+    bounds: Rect,
+    restore: Point,
+}
+impl CursorBackend for MacCursor {
+    fn background_control(&mut self) -> bool {
+        BackgroundCursor::enable()
+    }
+    fn hide(&mut self) -> bool {
+        unsafe { CGDisplayHideCursor(CGMainDisplayID()) == 0 }
+    }
+    fn connect_mouse(&mut self, connected: bool) -> bool {
+        unsafe { CGAssociateMouseAndMouseCursorPosition(i32::from(connected)) == 0 }
+    }
+    fn restore_position(&mut self) {
+        let b = self.bounds;
+        let point = Point {
+            x: self
+                .restore
+                .x
+                .clamp(b.origin.x + 4.0, b.origin.x + b.size.width - 5.0),
+            y: self
+                .restore
+                .y
+                .clamp(b.origin.y + 4.0, b.origin.y + b.size.height - 5.0),
+        };
+        unsafe {
+            CGWarpMouseCursorPosition(point);
+        }
+    }
+    fn show(&mut self) {
+        unsafe {
+            CGDisplayShowCursor(CGMainDisplayID());
+        }
+    }
 }
 
 const TAG: i64 = 0x4c414e464c59;
@@ -104,7 +195,7 @@ struct State {
     server: bool,
     edge: String,
     remote: bool,
-    hidden: bool,
+    capture: CursorCapture,
     bounds: Rect,
     cursor: Point,
     keys: BTreeSet<u16>,
@@ -123,7 +214,7 @@ impl Default for State {
             server: false,
             edge: "right".into(),
             remote: false,
-            hidden: false,
+            capture: CursorCapture::default(),
             bounds: Rect::default(),
             cursor: Point::default(),
             keys: BTreeSet::new(),
@@ -170,11 +261,10 @@ fn post(event: Ref) {
 }
 
 fn release(s: &mut State) {
-    if s.server && s.remote {
-        unsafe {
-            CGAssociateMouseAndMouseCursorPosition(true);
-        }
-    }
+    s.capture.release(&mut MacCursor {
+        bounds: s.bounds,
+        restore: s.cursor,
+    });
     for key in std::mem::take(&mut s.keys) {
         unsafe {
             let event = CGEventCreateKeyboardEvent(null_mut(), key, false);
@@ -198,23 +288,6 @@ fn release(s: &mut State) {
             ));
         }
     }
-    if s.hidden {
-        unsafe {
-            // Move inward before showing the local cursor to prevent immediate re-entry.
-            let b = s.bounds;
-            let point = Point {
-                x: s.cursor
-                    .x
-                    .clamp(b.origin.x + 4.0, b.origin.x + b.size.width - 5.0),
-                y: s.cursor
-                    .y
-                    .clamp(b.origin.y + 4.0, b.origin.y + b.size.height - 5.0),
-            };
-            CGWarpMouseCursorPosition(point);
-            CGDisplayShowCursor(CGMainDisplayID());
-        }
-        s.hidden = false;
-    }
     s.remote = false;
     s.cooldown = Instant::now() + Duration::from_millis(500);
 }
@@ -233,7 +306,9 @@ pub fn stop() {
 
 fn thread_main(ready: mpsc::SyncSender<Result<(), String>>) {
     unsafe {
-        let tap = CGEventTapCreate(1, 0, 0, MASK, callback, null_mut());
+        // A session tap can swallow clicks/keys after WindowServer already moved
+        // the hardware cursor. Filter at the HID entry point instead.
+        let tap = CGEventTapCreate(0, 0, 0, MASK, callback, null_mut());
         if tap.is_null() {
             let _ = ready.send(Err("INPUT_PERMISSION".into()));
             return;
@@ -281,6 +356,9 @@ pub fn start(role: &str, edge: &str) -> Result<(), String> {
     }
     if unsafe { !CGPreflightPostEventAccess() || !CGPreflightListenEventAccess() } {
         return Err("INPUT_PERMISSION".into());
+    }
+    if role == "server" && !BackgroundCursor::enable() {
+        return Err("INPUT_CURSOR_CAPTURE".into());
     }
     let result = THREAD.get_or_init(|| {
         let (tx, rx) = mpsc::sync_channel(1);
@@ -386,12 +464,18 @@ extern "C" fn callback(_proxy: Ref, kind: u32, event: Ref, _user: Ref) -> Ref {
     {
         let p = unsafe { CGEventGetLocation(event) };
         if boundary(p, s.bounds, &s.edge, dx, dy) {
-            if unsafe { CGAssociateMouseAndMouseCursorPosition(false) } != 0 {
+            let mut backend = MacCursor {
+                bounds: s.bounds,
+                restore: p,
+            };
+            if !s.capture.acquire(&mut backend) {
+                s.enabled = false;
+                s.queue.clear();
+                s.queue.push(json!({"kind":"fault", "reason":"cursor"}));
                 return event;
             }
             s.remote = true;
             s.cursor = p;
-            s.hidden = unsafe { CGDisplayHideCursor(CGMainDisplayID()) } == 0;
             let b = s.bounds;
             s.queue
                 .push(json!({"kind":"enter", "x":(p.x-b.origin.x)/b.size.width,
@@ -409,8 +493,8 @@ extern "C" fn callback(_proxy: Ref, kind: u32, event: Ref, _user: Ref) -> Ref {
         s.queue.push(json!({"kind":"fault"}));
         return event;
     }
-    s.queue.push(
-        json!({"kind":"event", "t":kind, "flags":flags & 0x00ff_ffff,
+    s.queue
+        .push(json!({"kind":"event", "t":kind, "flags":flags & FLAGS_MASK,
         "key":key, "button":button.min(31), "dx":dx, "dy":dy,
         "sx":unsafe { CGEventGetIntegerValueField(event, 96) },
         "sy":unsafe { CGEventGetIntegerValueField(event, 97) },
@@ -420,8 +504,7 @@ extern "C" fn callback(_proxy: Ref, kind: u32, event: Ref, _user: Ref) -> Ref {
         "phase":unsafe { CGEventGetIntegerValueField(event, 99) },
         "momentum":unsafe { CGEventGetIntegerValueField(event, 123) },
         "repeat":unsafe { CGEventGetIntegerValueField(event, 8) },
-        "clicks":unsafe { CGEventGetIntegerValueField(event, 1) }}),
-    );
+        "clicks":unsafe { CGEventGetIntegerValueField(event, 1) }}));
     null_mut()
 }
 
@@ -494,13 +577,13 @@ pub fn inject(value: &str) -> Result<(), String> {
     }
     if e.kind != "event"
         || !matches!(e.t, 1..=7 | 10..=12 | 22 | 25..=27)
-        || e.key > 127
+        || !valid_key(e.t, e.key)
         || e.button > 31
         || !e.dx.is_finite()
         || !e.dy.is_finite()
         || e.dx.abs() > 10000.0
         || e.dy.abs() > 10000.0
-        || e.flags > 0x00ff_ffff
+        || e.flags & !FLAGS_MASK != 0
         || e.sx.unsigned_abs() > 10000
         || e.sy.unsigned_abs() > 10000
         || e.line_x.unsigned_abs() > 10000
@@ -513,12 +596,15 @@ pub fn inject(value: &str) -> Result<(), String> {
     }
     unsafe {
         let event = if matches!(e.t, 10..=12) {
-            if e.t == 10 || (e.t == 12 && e.flags & MODIFIERS != 0) {
-                s.keys.insert(e.key);
-            } else {
-                s.keys.remove(&e.key);
+            let held = held_key(e.t, e.key, e.flags);
+            if let Some(down) = held {
+                if down {
+                    s.keys.insert(e.key);
+                } else {
+                    s.keys.remove(&e.key);
+                }
             }
-            let event = CGEventCreateKeyboardEvent(null_mut(), e.key, e.t != 11);
+            let event = CGEventCreateKeyboardEvent(null_mut(), e.key, held.unwrap_or(false));
             if !event.is_null() {
                 CGEventSetIntegerValueField(event, 8, e.repeat_key.clamp(0, 1));
                 CGEventSetType(event, e.t);

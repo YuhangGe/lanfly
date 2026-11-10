@@ -33,4 +33,5 @@ Thumbs.db
 # Rust input module and precompiled platform packages
 native/target/
 native/index.node
+native/index.node.*.tmp
 platform/*/index.node

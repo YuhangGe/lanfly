@@ -13,6 +13,7 @@ export function registerErrors() {
     INPUT_PEER_CHANGED: '对方身份与已配对设备不同，请核对后解除旧配对再连接',
     INPUT_START_FAILED: '无法启动键鼠共享，请检查权限、显示器和配置目录权限',
     INPUT_NATIVE_ERROR: '原生键鼠组件出现异常，共享已停止',
+    INPUT_CURSOR_CAPTURE: '系统无法锁定本机光标，共享已停止，请重启 lanfly 后重试',
     INPUT_INTERRUPTED: '显示器发生变化或键鼠处理超时，共享已断开',
     INPUT_CONNECTION_LOST: '键鼠连接已中断，本机控制已恢复',
     INVALID_INPUT: '请求参数不正确，请刷新页面后重试',
