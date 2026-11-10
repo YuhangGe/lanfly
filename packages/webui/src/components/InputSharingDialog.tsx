@@ -304,7 +304,8 @@ export default function InputSharingDialog(props: {
             </div>
             <p className="m-0 text-[11px] leading-relaxed text-neutral-80">
               紧急停止：在任一台 Mac 按 Ctrl + Option + Command + Esc。关闭网页会继续共享；退出
-              lanfly 后停止。配对和位置会保存，重启后需手动启用。不包含剪贴板同步。
+              lanfly
+              后停止。配对和位置会保存，正常退出后下次启动自动恢复共享；手动停止或紧急停止会关闭自动恢复。不包含剪贴板同步。
             </p>
             <div className="flex flex-wrap justify-end gap-2">
               {model.status.pairedName && (

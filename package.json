@@ -23,6 +23,8 @@
   },
   "files": [
     "dist",
+    "!dist/data.json",
+    "!dist/data.json.*.tmp",
     "docs/lanfly.png",
     "changelog.md"
   ],

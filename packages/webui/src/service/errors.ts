@@ -4,7 +4,7 @@ export function registerErrors() {
   registerErrorMessages({
     INPUT_UNSUPPORTED: '当前系统暂不支持键鼠共享，仅支持 macOS',
     INPUT_NATIVE_MISSING: '原生组件未安装，请重新安装 lanfly',
-    INPUT_CONFIG_ERROR: '无法读取键鼠配置，请检查配置文件和目录权限',
+    INPUT_CONFIG_ERROR: '无法读取或保存 data.json，请检查配置文件和目录权限',
     INPUT_SINGLE_SCREEN: '键鼠共享暂时只支持双方各一个显示器',
     INPUT_PERMISSION: '请先授予辅助功能和输入监控权限，必要时重启 lanfly',
     INPUT_NOT_READY: '请先选择正确角色并启用共享',

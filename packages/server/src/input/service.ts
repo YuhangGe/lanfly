@@ -8,7 +8,8 @@ import { z } from 'zod';
 import type { EventHub } from '../services/events';
 import type { PeerTarget } from '../services/remote';
 
-import { throwActionError } from '../core/errors';
+import { errorCode, throwActionError } from '../core/errors';
+import { logger } from '../logger';
 import { InputChannel } from './channel';
 import { loadNative, type NativeInput, type NativeStatus } from './native';
 import { InputStore } from './store';
@@ -77,6 +78,19 @@ export class InputService {
       this.#status.pairedName = this.store.data?.paired?.name;
     } catch {
       this.#status.error = 'INPUT_CONFIG_ERROR';
+      logger.warn(`无法读取或保存配置文件 ${this.store.file}`);
+    }
+  }
+
+  /** Restore only an explicitly enabled, previously approved pairing. */
+  resume(): void {
+    if (!this.#initialized || !this.store.data?.paired || !this.store.data.autoStart) return;
+    try {
+      this.#enableRuntime();
+    } catch (error) {
+      this.#status.error = errorCode(error, 'INPUT_START_FAILED');
+      this.#publish();
+      logger.warn(`无法自动恢复键鼠共享：${this.#status.error}`);
     }
   }
 
@@ -117,13 +131,16 @@ export class InputService {
 
   async configure(settings: InputSettings): Promise<InputStatus> {
     if (!this.#initialized) throwActionError('INPUT_CONFIG_ERROR');
-    this.disable();
+    this.#stopRuntime();
     const previous = this.store.data!.settings;
+    const previousAutoStart = this.store.data!.autoStart;
     this.store.data!.settings = settings;
+    this.store.data!.autoStart = false;
     try {
       await this.store.save();
     } catch {
       this.store.data!.settings = previous;
+      this.store.data!.autoStart = previousAutoStart;
       throwActionError('INPUT_CONFIG_ERROR');
     }
     this.#status.settings = settings;
@@ -131,7 +148,21 @@ export class InputService {
     return this.status();
   }
 
-  enable(): InputStatus {
+  async enable(): Promise<InputStatus> {
+    const previous = this.store.data?.autoStart;
+    this.#enableRuntime();
+    this.store.data!.autoStart = true;
+    try {
+      await this.store.save();
+    } catch {
+      this.store.data!.autoStart = previous ?? false;
+      this.#stopRuntime();
+      throwActionError('INPUT_CONFIG_ERROR');
+    }
+    return this.status();
+  }
+
+  #enableRuntime(): InputStatus {
     this.#check();
     if (this.#status.enabled) return this.status();
     this.#status.enabled = true;
@@ -182,15 +213,18 @@ export class InputService {
   }
 
   async forget(): Promise<InputStatus> {
-    this.disable();
+    this.#stopRuntime();
     this.#target = undefined;
     if (!this.#initialized) throwActionError('INPUT_CONFIG_ERROR');
     const previous = this.store.data!.paired;
+    const previousAutoStart = this.store.data!.autoStart;
     this.store.data!.paired = undefined;
+    this.store.data!.autoStart = false;
     try {
       await this.store.save();
     } catch {
       this.store.data!.paired = previous;
+      this.store.data!.autoStart = previousAutoStart;
       throwActionError('INPUT_CONFIG_ERROR');
     }
     this.#status.pairedName = undefined;
@@ -198,7 +232,19 @@ export class InputService {
     return this.status();
   }
 
-  disable(): InputStatus {
+  async disable(): Promise<InputStatus> {
+    this.#stopRuntime();
+    if (!this.#initialized) throwActionError('INPUT_CONFIG_ERROR');
+    this.store.data!.autoStart = false;
+    try {
+      await this.store.save();
+    } catch {
+      throwActionError('INPUT_CONFIG_ERROR');
+    }
+    return this.status();
+  }
+
+  #stopRuntime(): void {
     this.#status.enabled = false;
     this.#status.pairingUntil = undefined;
     if (this.#timer) clearInterval(this.#timer);
@@ -206,11 +252,11 @@ export class InputService {
     this.#disconnect();
     this.#status.phase = 'disabled';
     this.#publish();
-    return this.status();
   }
 
-  stop(): void {
-    this.disable();
+  async stop(): Promise<void> {
+    this.#stopRuntime();
+    await this.store.flush();
   }
 
   upgrade(request: IncomingMessage, socket: Duplex, head: Buffer): void {
@@ -449,7 +495,7 @@ export class InputService {
     } catch (error) {
       if (error instanceof Error && error.message === 'INPUT_CURSOR_CAPTURE') {
         this.#status.error = 'INPUT_CURSOR_CAPTURE';
-        this.disable();
+        this.#stopRuntime();
       } else {
         this.#status.error = 'INPUT_START_FAILED';
         c.close();
@@ -462,7 +508,7 @@ export class InputService {
       const events = JSON.parse(this.#native!.poll()) as { kind: string; reason?: string }[];
       if (events.some((e) => e.kind === 'fault' && e.reason === 'cursor')) {
         this.#status.error = 'INPUT_CURSOR_CAPTURE';
-        this.disable();
+        this.#stopRuntime();
         return;
       }
       if (events.some((e) => e.kind === 'fault')) {
@@ -472,7 +518,11 @@ export class InputService {
       }
       if (events.some((e) => e.kind === 'emergency')) {
         // Stop the session on either device; emergency never silently reconnects.
-        this.disable();
+        void this.disable().catch(() => {
+          this.#status.error = 'INPUT_CONFIG_ERROR';
+          this.#publish();
+          logger.warn(`无法保存紧急停止状态到 ${this.store.file}`);
+        });
         return;
       }
       if (events.some((e) => e.kind === 'leave')) {
@@ -522,7 +572,7 @@ export class InputService {
     const s = this.status();
     if (s.screens !== 1 || !s.accessibility || !s.inputMonitoring) {
       this.#status.error = s.screens !== 1 ? 'INPUT_SINGLE_SCREEN' : 'INPUT_PERMISSION';
-      this.disable();
+      this.#stopRuntime();
       return;
     }
     if ((s.pairingUntil ?? Infinity) < Date.now()) {

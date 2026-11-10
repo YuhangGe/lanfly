@@ -56,32 +56,37 @@ afterEach(async () => {
   for (const close of cleanup.splice(0).reverse()) await close();
 });
 
-async function device(name: string, role: 'server' | 'client' = 'server') {
-  const directory = await mkdtemp(path.join(os.tmpdir(), 'lanfly-input-'));
-  cleanup.push(() => rm(directory, { force: true, recursive: true }));
+async function device(
+  name: string,
+  role: 'server' | 'client' = 'server',
+  existing?: { directory: string; port: number; permissions?: boolean },
+) {
+  const directory = existing?.directory ?? (await mkdtemp(path.join(os.tmpdir(), 'lanfly-input-')));
+  if (!existing) cleanup.push(() => rm(directory, { force: true, recursive: true }));
   const events = new EventHub();
   cleanup.push(() => events.stop());
   const native = new FakeNative();
+  if (existing?.permissions === false) native.accessibility = false;
   const store = new InputStore(directory);
   const service = new InputService(name, events, { store, native, supported: true });
   await service.initialize();
-  await service.configure({ role, edge: 'right' });
+  if (!existing) await service.configure({ role, edge: 'right' });
   const server = http.createServer((_req, res) => {
     res.writeHead(404);
     res.end();
   });
   server.on('upgrade', (req, socket, head) => service.upgrade(req, socket, head));
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  await new Promise<void>((resolve) => server.listen(existing?.port ?? 0, '127.0.0.1', resolve));
   const address = server.address();
   if (!address || typeof address === 'string') throw new Error('no port');
-  cleanup.push(
-    () =>
-      new Promise<void>((resolve) => {
-        service.stop();
-        server.close(() => resolve());
-      }),
-  );
-  return { service, native, store, target: { host: '127.0.0.1', port: address.port } };
+  let closing: Promise<void> | undefined;
+  const close = () =>
+    (closing ??= service
+      .stop()
+      .then(() => new Promise<void>((resolve) => server.close(() => resolve()))));
+  cleanup.push(close);
+  service.resume();
+  return { service, native, store, close, target: { host: '127.0.0.1', port: address.port } };
 }
 
 async function waitFor(condition: () => boolean) {
@@ -93,8 +98,8 @@ async function waitFor(condition: () => boolean) {
 }
 
 async function pair(a: Awaited<ReturnType<typeof device>>, b: Awaited<ReturnType<typeof device>>) {
-  a.service.enable();
-  b.service.enable();
+  await a.service.enable();
+  await b.service.enable();
   await b.service.connect(a.target);
   await waitFor(() => Boolean(a.service.status().pairingCode && b.service.status().pairingCode));
   const code = a.service.status().pairingCode!;
@@ -123,7 +128,7 @@ describe('one-to-one input service', () => {
     await waitFor(() => !a.service.status().controlling);
     expect(a.native.resets).toBe(1);
     const stopped = a.native.stopped;
-    b.service.disable();
+    await b.service.disable();
     await waitFor(() => a.service.status().phase === 'waiting');
     expect(a.native.stopped).toBeGreaterThan(stopped);
     const saved = new InputStore(path.dirname(a.store.file));
@@ -137,13 +142,91 @@ describe('one-to-one input service', () => {
     const a = await device('Source');
     const b = await device('Receiver', 'client');
     await pair(a, b);
-    b.service.disable();
+    await b.service.disable();
     await waitFor(() => a.service.status().phase === 'waiting');
-    b.service.enable();
+    await b.service.enable();
     await waitFor(
       () => a.service.status().phase === 'connected' && b.service.status().phase === 'connected',
     );
     expect(a.native.started).toHaveLength(2);
+  });
+
+  it('automatically restores both paired devices after shutdown, even when the client starts first', async () => {
+    const a = await device('Source');
+    const b = await device('Receiver', 'client');
+    await pair(a, b);
+    const serverKey = a.store.publicKey,
+      clientKey = b.store.publicKey;
+    await b.close();
+    await a.close();
+    const client = await device('Receiver', 'client', {
+      directory: path.dirname(b.store.file),
+      port: b.target.port,
+    });
+    const source = await device('Source', 'server', {
+      directory: path.dirname(a.store.file),
+      port: a.target.port,
+    });
+    await waitFor(
+      () =>
+        source.service.status().phase === 'connected' &&
+        client.service.status().phase === 'connected',
+    );
+    expect(source.store.publicKey).toBe(serverKey);
+    expect(client.store.publicKey).toBe(clientKey);
+    expect(source.service.status().pairingCode).toBeUndefined();
+    expect(client.service.status().pairingCode).toBeUndefined();
+    expect(source.native.started).toEqual([['server', 'right']]);
+    expect(client.native.started).toEqual([['client', 'left']]);
+  });
+
+  it.each(['manual', 'emergency'] as const)('remembers %s stop across restart', async (mode) => {
+    const a = await device('Source');
+    const b = await device('Receiver', 'client');
+    await pair(a, b);
+    if (mode === 'manual') await b.service.disable();
+    else {
+      b.native.queue.push({ kind: 'emergency' });
+      await waitFor(() => !b.service.status().enabled);
+    }
+    await b.close();
+    const client = await device('Receiver', 'client', {
+      directory: path.dirname(b.store.file),
+      port: b.target.port,
+    });
+    expect(client.store.data?.paired?.key).toBe(a.store.publicKey);
+    expect(client.store.data?.autoStart).toBe(false);
+    expect(client.service.status().enabled).toBe(false);
+    expect(client.native.started).toHaveLength(0);
+  });
+
+  it('does not automatically open pairing for devices that have never been approved', async () => {
+    const a = await device('Unpaired');
+    await a.service.enable();
+    await a.close();
+    const restarted = await device('Unpaired', 'server', {
+      directory: path.dirname(a.store.file),
+      port: a.target.port,
+    });
+    expect(restarted.service.status().enabled).toBe(false);
+    expect(restarted.service.status().pairingUntil).toBeUndefined();
+  });
+
+  it('retains saved pairing when permissions prevent automatic restoration', async () => {
+    const a = await device('Source');
+    const b = await device('Receiver', 'client');
+    await pair(a, b);
+    await b.close();
+    const restarted = await device('Receiver', 'client', {
+      directory: path.dirname(b.store.file),
+      port: b.target.port,
+      permissions: false,
+    });
+    expect(restarted.service.status().enabled).toBe(false);
+    expect(restarted.service.status().error).toBe('INPUT_PERMISSION');
+    expect(restarted.store.data?.paired?.key).toBe(a.store.publicKey);
+    expect(restarted.store.data?.autoStart).toBe(true);
+    expect(restarted.native.started).toHaveLength(0);
   });
 
   it('keeps routing keyboard input to the client across Caps Lock input-source changes', async () => {
@@ -171,8 +254,8 @@ describe('one-to-one input service', () => {
     const a = await device('Source');
     const b = await device('Receiver', 'client');
     a.native.startError = 'INPUT_CURSOR_CAPTURE';
-    a.service.enable();
-    b.service.enable();
+    await a.service.enable();
+    await b.service.enable();
     await b.service.connect(a.target);
     await waitFor(() => Boolean(a.service.status().pairingCode && b.service.status().pairingCode));
     const code = a.service.status().pairingCode!;
@@ -224,7 +307,7 @@ describe('one-to-one input service', () => {
   it('rejects keyboard events received before local pairing approval', async () => {
     const a = await device('Source');
     const b = await device('Unapproved', 'client');
-    a.service.enable();
+    await a.service.enable();
     await new Promise<void>((resolve, reject) => {
       const request = http.request({
         hostname: a.target.host,
@@ -257,10 +340,10 @@ describe('one-to-one input service', () => {
     const a = await device('Source');
     const b = await device('Receiver', 'client');
     await pair(a, b);
-    b.service.disable();
+    await b.service.disable();
     await waitFor(() => a.service.status().phase === 'waiting');
     const c = await device('Impostor', 'client');
-    c.service.enable();
+    await c.service.enable();
     await c.service.connect(a.target);
     await waitFor(() => a.service.status().error === 'INPUT_PEER_CHANGED');
     expect(a.store.data?.paired?.key).toBe(b.store.publicKey);
@@ -283,19 +366,21 @@ describe('one-to-one input service', () => {
   it('fails closed for missing permissions, multiple screens, unsupported systems, and corrupt storage', async () => {
     const a = await device('Source');
     a.native.accessibility = false;
-    expect(() => a.service.enable()).toThrow();
+    await expect(a.service.enable()).rejects.toHaveProperty('code');
     expect(a.native.started).toHaveLength(0);
     a.native.accessibility = true;
     a.native.screens = 2;
-    expect(() => a.service.enable()).toThrow();
+    await expect(a.service.enable()).rejects.toHaveProperty('code');
     const events = new EventHub();
     cleanup.push(() => events.stop());
     const unsupported = new InputService('Linux', events, { supported: false });
     expect(unsupported.status().supported).toBe(false);
-    expect(() => unsupported.enable()).toThrow();
-    unsupported.stop();
-    const content = JSON.parse(await readFile(a.store.file, 'utf8')) as { settings: unknown };
-    expect(content.settings).toEqual({ role: 'server', edge: 'right' });
+    await expect(unsupported.enable()).rejects.toHaveProperty('code', 'INPUT_UNSUPPORTED');
+    await unsupported.stop();
+    const content = JSON.parse(await readFile(a.store.file, 'utf8')) as {
+      input: { settings: unknown };
+    };
+    expect(content.input.settings).toEqual({ role: 'server', edge: 'right' });
     await writeFile(a.store.file, '{broken config');
     const broken = new InputService('Broken', events, {
       store: new InputStore(path.dirname(a.store.file)),
@@ -304,6 +389,6 @@ describe('one-to-one input service', () => {
     });
     await broken.initialize();
     expect(broken.status().error).toBe('INPUT_CONFIG_ERROR');
-    expect(() => broken.enable()).toThrow();
+    await expect(broken.enable()).rejects.toHaveProperty('code', 'INPUT_CONFIG_ERROR');
   });
 });

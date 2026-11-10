@@ -18,6 +18,7 @@ function run(cwd: string, args: string[]): void {
 
 async function makeReadable(directory: string): Promise<void> {
   for (const entry of await readdir(directory, { withFileTypes: true })) {
+    if (entry.name === 'data.json' || entry.name.startsWith('data.json.')) continue;
     const filePath = path.join(directory, entry.name);
     if (entry.isDirectory()) await makeReadable(filePath);
     else await chmod(filePath, 0o644).catch(() => undefined);
@@ -38,8 +39,12 @@ async function totalSize(directory: string): Promise<number> {
 run(webui, ['run', 'build']);
 run(server, ['run', 'typecheck']);
 
-await rm(dist, { recursive: true, force: true });
 await mkdir(dist, { recursive: true });
+// Runtime configuration lives next to cli.js and must survive rebuilds.
+for (const entry of await readdir(dist, { withFileTypes: true })) {
+  if (entry.name === 'data.json' || entry.name.startsWith('data.json.')) continue;
+  await rm(path.join(dist, entry.name), { recursive: true, force: true });
+}
 
 await build({
   entryPoints: [path.join(server, 'src/cli.ts')],

@@ -4,3 +4,5 @@ script/
 .github/
 node_modules/
 *.tgz
+**/data.json
+**/data.json.*.tmp

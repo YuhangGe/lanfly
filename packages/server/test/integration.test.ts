@@ -2,12 +2,14 @@ import type { AppState, ChatMessage, PeerInfo, TransferView } from '@lanfly/comm
 
 import { afterEach, describe, expect, it } from 'bun:test';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { access, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { access, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse, stringify } from 'superjson';
+
+import { InputStore } from '../src/input/store';
 
 const CLI = fileURLToPath(new URL('../../../dist/cli.js', import.meta.url));
 
@@ -33,15 +35,22 @@ async function startInstance(options: {
   out: string;
   port?: number;
   discovery?: boolean;
+  cli?: string;
+  cwd?: string;
+  useCliConfig?: boolean;
 }): Promise<Instance> {
-  const args = [CLI, '--no-open', '--name', options.name, '--out', options.out];
+  const args = [options.cli ?? CLI, '--no-open', '--name', options.name, '--out', options.out];
   if (options.port !== undefined) args.push('--port', String(options.port));
   else args.push('--port', '0');
   if (!options.discovery) args.push('--no-discovery');
   if (options.secret) args.push('--secret', options.secret);
 
+  const env: NodeJS.ProcessEnv = { ...process.env, LANFLY_NO_OPEN: '1' };
+  if (options.useCliConfig) delete env.LANFLY_CONFIG_DIR;
+  else env.LANFLY_CONFIG_DIR = path.join(options.out, 'config');
   const child = spawn(process.execPath, args, {
-    env: { ...process.env, LANFLY_NO_OPEN: '1' },
+    env,
+    cwd: options.cwd,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   const logs: string[] = [];
@@ -181,6 +190,44 @@ afterEach(async () => {
 });
 
 describe('双实例集成', () => {
+  it('使用 cli.js 同目录的 data.json，不依赖 shell 工作目录', async () => {
+    const dir = await newOutDir();
+    const bin = path.join(dir, 'bin');
+    const cwd = path.join(dir, 'working');
+    await mkdir(bin);
+    await mkdir(cwd);
+    await copyFile(CLI, path.join(bin, 'cli.js'));
+    await writeFile(
+      path.join(dir, 'package.json'),
+      JSON.stringify({ type: 'module', version: '0.2.0' }),
+    );
+    const saved = new InputStore(bin);
+    await saved.load();
+    saved.data!.settings = { role: 'client', edge: 'left' };
+    saved.data!.paired = {
+      key: saved.publicKey,
+      name: 'Saved configuration',
+      host: '127.0.0.1',
+      port: 8087,
+    };
+    await saved.save();
+    const instance = await startInstance({
+      name: 'Config',
+      out: path.join(dir, 'downloads'),
+      cli: path.join(bin, 'cli.js'),
+      cwd,
+      useCliConfig: true,
+    });
+    const result = await rpc<{ pairedName: string; enabled: boolean; settings: unknown }>(
+      instance,
+      'inputStatus',
+    );
+    expect(result.data?.pairedName).toBe('Saved configuration');
+    expect(result.data?.settings).toEqual({ role: 'client', edge: 'left' });
+    expect(result.data?.enabled).toBe(false);
+    await expect(access(path.join(cwd, 'data.json'))).rejects.toHaveProperty('code', 'ENOENT');
+  });
+
   it('手动连接后可以互发消息和文件，重名自动加序号', async () => {
     await access(CLI).catch(() => {
       throw new Error('未找到 dist/cli.js，请先运行 pnpm build');

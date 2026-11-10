@@ -35,3 +35,7 @@ native/target/
 native/index.node
 native/index.node.*.tmp
 platform/*/index.node
+
+# Local runtime configuration (includes pairing identity)
+data.json
+data.json.*.tmp

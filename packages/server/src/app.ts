@@ -78,6 +78,7 @@ export class Application {
     this.#server = server;
     const port = await listenWithFallback(server, this.config.port, 20);
     this.identity.port = port;
+    this.input.resume();
 
     if (!this.config.noDiscovery) {
       this.#discovery = new MulticastDiscovery(
@@ -105,7 +106,7 @@ export class Application {
   }
 
   async stop(): Promise<void> {
-    this.input.stop();
+    await this.input.stop();
     if (this.#pruneTimer) clearInterval(this.#pruneTimer);
     if (this.#heartbeatTimer) clearInterval(this.#heartbeatTimer);
     this.#discovery?.stop();
