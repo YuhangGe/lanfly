@@ -63,7 +63,19 @@ export class TransferStore {
 
   update(
     id: string,
-    patch: Partial<Pick<TransferRecord, 'status' | 'error' | 'savedName' | 'tempPath'>>,
+    patch: Partial<
+      Pick<
+        TransferRecord,
+        | 'status'
+        | 'error'
+        | 'savedName'
+        | 'tempPath'
+        | 'downloadUrl'
+        | 'expiresAt'
+        | 'downloadedAt'
+        | 'expired'
+      >
+    >,
   ): TransferRecord | undefined {
     const transfer = this.#transfers.get(id);
     if (!transfer) return undefined;
@@ -145,5 +157,9 @@ export function viewOf(transfer: TransferRecord): TransferView {
     createdAt: transfer.createdAt,
     savedName: transfer.savedName,
     error: transfer.error,
+    downloadUrl: transfer.downloadUrl,
+    expiresAt: transfer.expiresAt,
+    downloadedAt: transfer.downloadedAt,
+    expired: transfer.expired,
   };
 }

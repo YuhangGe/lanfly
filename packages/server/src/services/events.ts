@@ -8,6 +8,8 @@ type SseClient = {
 };
 
 export class EventHub {
+  peersProvider?: () => unknown;
+  onPeersChanged?: () => void;
   #clients = new Set<SseClient>();
   #nextId = 1;
   #heartbeat: NodeJS.Timeout;
@@ -41,6 +43,10 @@ export class EventHub {
   }
 
   broadcast(event: string, data: unknown): void {
+    if (event === 'peers') {
+      data = this.peersProvider?.() ?? data;
+      this.onPeersChanged?.();
+    }
     const payload = JSON.stringify(data);
     const id = this.#nextId++;
     const frame = `id: ${id}\nevent: ${event}\ndata: ${payload}\n\n`;

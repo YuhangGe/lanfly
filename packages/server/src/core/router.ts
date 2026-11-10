@@ -4,10 +4,11 @@ import { LOCAL_RPC_PREFIX, LOCAL_UPLOAD_PREFIX, PEER_API_PREFIX, SSE_PATH } from
 
 import type { Application } from '../app';
 
+import { handleBrowserRequest } from '../api/browser';
 import { handleLocalRequest } from '../api/local';
 import { handlePeerRequest } from '../api/peer';
 import { logger } from '../logger';
-import { sendError } from './http';
+import { HttpError, sendError } from './http';
 import { sendStatic } from './static';
 
 export function createHttpHandler(app: Application) {
@@ -17,7 +18,12 @@ export function createHttpHandler(app: Application) {
     response.setHeader('referrer-policy', 'no-referrer');
     void dispatch(app, request, response).catch((error) => {
       logger.error(error);
-      if (!response.headersSent) sendError(response, 500, 'INTERNAL_ERROR');
+      if (!response.headersSent)
+        sendError(
+          response,
+          error instanceof HttpError ? error.status : 500,
+          error instanceof HttpError ? error.message : 'INTERNAL_ERROR',
+        );
       else if (!response.writableEnded) response.end();
     });
   };
@@ -37,6 +43,10 @@ async function dispatch(
   }
 
   const pathname = url.pathname;
+  if (pathname.startsWith('/api/v1/browser/')) {
+    await handleBrowserRequest(app, request, response, pathname);
+    return;
+  }
   if (pathname.startsWith(PEER_API_PREFIX)) {
     await handlePeerRequest(app, request, response, pathname, url.search);
     return;

@@ -156,7 +156,7 @@ async function main(): Promise<void> {
   console.log(`  设备      ${self.name}`);
   console.log(`  房间      ${self.secret ? '密码房间（同密码设备可见）' : '公开房间'}`);
   console.log(`  本地      \x1b[4m${self.url}\x1b[0m`);
-  console.log(`  局域网    ${self.host}:${port} （供对方手动添加）`);
+  console.log(`  局域网    http://${self.host}:${port} （浏览器接入或手动添加设备）`);
   console.log(`  下载目录  ${self.downloadsDir}`);
   console.log(`  配置文件  ${app.input.store.file}`);
   console.log(`  \x1b[90m按 Ctrl+C 停止；关闭终端后本次聊天记录会丢失。\x1b[0m`);

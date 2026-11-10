@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 /** Config namespaces share data.json beside the running CLI bundle, not the shell cwd. */
 export class DataStore {
   readonly file: string;
+  loaded = false;
   #data: Record<string, unknown> = {};
   #writes: Promise<void> = Promise.resolve();
 
@@ -25,6 +26,7 @@ export class DataStore {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
       this.#data = {};
     }
+    this.loaded = true;
   }
 
   get(key: string): unknown {

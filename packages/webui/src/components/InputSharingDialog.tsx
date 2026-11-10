@@ -227,12 +227,14 @@ export default function InputSharingDialog(props: {
                         ? `已配对：${model.status.pairedName}`
                         : '请选择一台设备'}
                     </option>
-                    {props.peers.map((peer) => (
-                      <option key={peer.id} value={peer.id}>
-                        {peer.name}
-                        {peer.online ? '' : '（离线）'}
-                      </option>
-                    ))}
+                    {props.peers
+                      .filter((peer) => peer.kind !== 'browser')
+                      .map((peer) => (
+                        <option key={peer.id} value={peer.id}>
+                          {peer.name}
+                          {peer.online ? '' : '（离线）'}
+                        </option>
+                      ))}
                   </select>
                 </label>
               )}

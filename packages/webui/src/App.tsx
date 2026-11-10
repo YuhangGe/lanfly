@@ -25,11 +25,13 @@ import type { Toast, UiMessage } from './types';
 import AddPeerDialog from './components/AddPeerDialog';
 import Avatar from './components/Avatar';
 import Button from './components/Button';
+import Dialog from './components/Dialog';
 import InputSharingDialog from './components/InputSharingDialog';
 import MessageItem from './components/MessageItem';
 import PeerList from './components/PeerList';
 import Toasts from './components/Toasts';
 import { ActionError } from './service/action';
+import { browserMode, browserName, eventPath, joinBrowser, renameBrowser } from './service/browser';
 
 const EMPTY_SELF: SelfInfo = {
   id: '',
@@ -65,6 +67,12 @@ function truncate(value: string, length: number): string {
 export default function App() {
   const model = vm({
     loading: true,
+    joinOpen: false,
+    joinBusy: false,
+    joinError: '',
+    browserName: browserName(),
+    password: '',
+    renaming: false,
     connected: false,
     self: EMPTY_SELF,
     peers: [] as PeerView[],
@@ -90,6 +98,8 @@ export default function App() {
   const fileInput = ref<HTMLInputElement>();
 
   let eventSource: EventSource | undefined;
+  let reconnectTimer: number | undefined;
+  let disposed = false;
   let toastSequence = 0;
   const toastTimers = new Set<number>();
   const completedToasts = new Set<string>();
@@ -285,7 +295,7 @@ export default function App() {
   }
 
   function bindEvents() {
-    const source = new EventSource('/events');
+    const source = new EventSource(eventPath);
     eventSource = source;
     source.onopen = () => {
       model.connected = true;
@@ -293,6 +303,7 @@ export default function App() {
     };
     source.onerror = () => {
       model.connected = false;
+      if (browserMode && !model.joinBusy) void startBrowser();
     };
     source.addEventListener('peers', (event) => {
       const peers = parseEvent<PeerView[]>(event);
@@ -511,10 +522,54 @@ export default function App() {
     void nextTick().then(() => scrollToBottom());
   });
 
+  async function startBrowser() {
+    if (model.joinBusy || disposed) return;
+    window.clearTimeout(reconnectTimer);
+    model.joinBusy = true;
+    try {
+      await joinBrowser(model.browserName.trim() || browserName(), model.password || undefined);
+      model.password = '';
+      model.joinOpen = false;
+      model.joinError = '';
+      eventSource?.close();
+      bindEvents();
+      await refresh();
+    } catch (error) {
+      eventSource?.close();
+      model.joinOpen = true;
+      model.loading = false;
+      model.joinError = error instanceof Error ? error.message : '无法接入';
+      if ((error as { status?: number }).status !== 401)
+        reconnectTimer = window.setTimeout(() => void startBrowser(), 3000);
+    } finally {
+      model.joinBusy = false;
+    }
+  }
+
+  async function submitBrowser() {
+    if (!model.renaming) {
+      await startBrowser();
+      return;
+    }
+    try {
+      await renameBrowser(model.browserName.trim());
+      model.joinOpen = false;
+      model.renaming = false;
+      await refresh();
+    } catch (error) {
+      model.joinError = error instanceof Error ? error.message : '修改失败';
+    }
+  }
+
   onMount(() => {
-    void refresh();
-    bindEvents();
+    if (browserMode) void startBrowser();
+    else {
+      void refresh();
+      bindEvents();
+    }
     return () => {
+      disposed = true;
+      window.clearTimeout(reconnectTimer);
       eventSource?.close();
       for (const timer of toastTimers) window.clearTimeout(timer);
       toastTimers.clear();
@@ -523,6 +578,55 @@ export default function App() {
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-neutral-10 text-neutral-100">
+      {model.joinOpen && (
+        <Dialog
+          title={model.renaming ? '修改设备名称' : '接入 lanfly'}
+          canClose={model.renaming}
+          onClose={() => {
+            model.joinOpen = false;
+          }}
+        >
+          <form
+            className="flex flex-col gap-3"
+            on:submit={(event) => {
+              event.preventDefault();
+              void submitBrowser();
+            }}
+          >
+            <label>
+              设备名称
+              <input
+                className="mt-1 w-full rounded border border-neutral-60 bg-neutral-20 p-2"
+                aria-label="设备名称"
+                value={model.browserName}
+                maxLength={64}
+                required
+                on:input={(event) => {
+                  model.browserName = (event.target as HTMLInputElement).value;
+                }}
+              />
+            </label>
+            {!model.renaming && (
+              <label>
+                房间密码
+                <input
+                  type="password"
+                  className="mt-1 w-full rounded border border-neutral-60 bg-neutral-20 p-2"
+                  aria-label="房间密码"
+                  value={model.password}
+                  on:input={(event) => {
+                    model.password = (event.target as HTMLInputElement).value;
+                  }}
+                />
+              </label>
+            )}
+            {model.joinError && <p className="text-red-40">{model.joinError}</p>}
+            <Button type="submit" variant="primary" disabled={model.joinBusy}>
+              {model.renaming ? '保存' : '加入'}
+            </Button>
+          </form>
+        </Dialog>
+      )}
       <header className="flex h-12 shrink-0 items-center gap-3 border-b border-neutral-40 bg-neutral-20/70 px-4">
         <div className="flex shrink-0 items-center gap-2">
           <span className="grid size-6 place-items-center rounded-[6px] bg-blue-30 text-white shadow-toolbar">
@@ -554,18 +658,20 @@ export default function App() {
           </div>
         )}
         <div className="ml-auto flex items-center gap-1.5">
-          <Button
-            size="compact"
-            variant="ghost"
-            title="键鼠共享"
-            aria-label="键鼠共享"
-            on:click={() => {
-              model.inputOpen = true;
-            }}
-          >
-            <span className="icon-[codicon--remote] text-[14px] sm:mr-1" aria-hidden="true" />
-            <span className="max-[760px]:hidden">键鼠共享</span>
-          </Button>
+          {!browserMode && (
+            <Button
+              size="compact"
+              variant="ghost"
+              title="键鼠共享"
+              aria-label="键鼠共享"
+              on:click={() => {
+                model.inputOpen = true;
+              }}
+            >
+              <span className="icon-[codicon--remote] text-[14px] sm:mr-1" aria-hidden="true" />
+              <span className="max-[760px]:hidden">键鼠共享</span>
+            </Button>
+          )}
           <span
             className={`flex items-center gap-1.5 rounded-full border px-2 py-1 text-[10px] ${
               model.connected
@@ -581,33 +687,37 @@ export default function App() {
               {model.connected ? '本地服务已连接' : '正在重连…'}
             </span>
           </span>
-          <Button
-            size="compact"
-            variant="ghost"
-            className="text-neutral-90 hover:text-neutral-110"
-            title={`打开下载目录：${model.self.downloadsDir}`}
-            aria-label="打开下载目录"
-            on:click={() => void openDownloadsFolder()}
-          >
-            <span
-              className="icon-[codicon--folder-opened] align-middle text-[13px] sm:mr-1"
-              aria-hidden="true"
-            />
-            <span className="max-[760px]:hidden">下载目录</span>
-          </Button>
-          <Button
-            size="compact"
-            variant="primary"
-            className="font-medium"
-            aria-label="添加设备"
-            on:click={openAddPeer}
-          >
-            <span
-              className="icon-[codicon--add] align-middle text-[13px] sm:mr-1"
-              aria-hidden="true"
-            />
-            <span className="max-[760px]:hidden">添加设备</span>
-          </Button>
+          {!browserMode && (
+            <Button
+              size="compact"
+              variant="ghost"
+              className="text-neutral-90 hover:text-neutral-110"
+              title={`打开下载目录：${model.self.downloadsDir}`}
+              aria-label="打开下载目录"
+              on:click={() => void openDownloadsFolder()}
+            >
+              <span
+                className="icon-[codicon--folder-opened] align-middle text-[13px] sm:mr-1"
+                aria-hidden="true"
+              />
+              <span className="max-[760px]:hidden">下载目录</span>
+            </Button>
+          )}
+          {!browserMode && (
+            <Button
+              size="compact"
+              variant="primary"
+              className="font-medium"
+              aria-label="添加设备"
+              on:click={openAddPeer}
+            >
+              <span
+                className="icon-[codicon--add] align-middle text-[13px] sm:mr-1"
+                aria-hidden="true"
+              />
+              <span className="max-[760px]:hidden">添加设备</span>
+            </Button>
+          )}
         </div>
       </header>
 
@@ -627,11 +737,22 @@ export default function App() {
             <div className="flex items-center gap-2.5">
               <Avatar name={model.self.name} id={model.self.id} size="md" online={true} />
               <div className="min-w-0 flex-1">
-                <div className="truncate text-[12.5px] font-semibold text-neutral-110">
+                <button
+                  className="truncate text-left text-[12.5px] font-semibold text-neutral-110"
+                  disabled={!browserMode}
+                  on:click={() => {
+                    model.renaming = true;
+                    model.browserName = model.self.name;
+                    model.joinError = '';
+                    model.joinOpen = true;
+                  }}
+                >
                   {model.self.name}
-                </div>
+                </button>
                 <div className="mt-0.5 truncate text-[10.5px] text-neutral-80">
-                  本机 · {model.self.host}:{model.self.port}
+                  {browserMode
+                    ? '浏览器设备 · 点击名称可修改'
+                    : `本机 · ${model.self.host}:${model.self.port}`}
                 </div>
               </div>
               <Button
@@ -644,16 +765,18 @@ export default function App() {
                 <span className="icon-[codicon--copy] text-[13px]" aria-hidden="true" />
               </Button>
             </div>
-            <div className="mt-2.5 flex items-center gap-1.5 text-[10px] text-neutral-70">
-              <span className="icon-[codicon--cloud-download] text-[11px]" aria-hidden="true" />
-              <button
-                className="min-w-0 cursor-pointer truncate text-left hover:text-neutral-90"
-                title={model.self.downloadsDir}
-                on:click={() => void openDownloadsFolder()}
-              >
-                {model.self.downloadsDir || '下载目录'}
-              </button>
-            </div>
+            {!browserMode && (
+              <div className="mt-2.5 flex items-center gap-1.5 text-[10px] text-neutral-70">
+                <span className="icon-[codicon--cloud-download] text-[11px]" aria-hidden="true" />
+                <button
+                  className="min-w-0 cursor-pointer truncate text-left hover:text-neutral-90"
+                  title={model.self.downloadsDir}
+                  on:click={() => void openDownloadsFolder()}
+                >
+                  {model.self.downloadsDir || '下载目录'}
+                </button>
+              </div>
+            )}
           </div>
 
           <div className="flex items-center justify-between px-4 pt-3 pb-1.5">
@@ -664,6 +787,7 @@ export default function App() {
           </div>
 
           <PeerList
+            readOnly={browserMode}
             peers={model.peers}
             activeId={model.activePeerId}
             unread={model.unread}
@@ -675,9 +799,13 @@ export default function App() {
           <div className="shrink-0 border-t border-neutral-40 px-4 py-3 text-[10px] leading-relaxed text-neutral-70">
             <div className="flex items-center gap-1.5">
               <span className="icon-[codicon--radio-tower] text-[11px]" aria-hidden="true" />
-              <span>UDP 组播自动发现</span>
+              <span>{browserMode ? '已作为独立设备接入' : 'UDP 组播自动发现'}</span>
             </div>
-            <div className="mt-1 text-neutral-70/80">组播不可用时，点击“添加设备”输入对方 IP。</div>
+            <div className="mt-1 text-neutral-70/80">
+              {browserMode
+                ? '文件点击下载，保留 30 分钟；保持网页打开以接收消息。'
+                : '组播不可用时，点击“添加设备”输入对方 IP。'}
+            </div>
           </div>
         </aside>
 
@@ -723,7 +851,7 @@ export default function App() {
                   ? '左侧列表中的设备与你运行着同一个 lanfly。选择后可以发送消息、拖拽文件，或直接粘贴截图。'
                   : '让另一台电脑也运行 npx lanfly。同一局域网内会自动出现，不需要登录或配置服务器。'}
               </p>
-              {!model.peers.length && (
+              {!browserMode && !model.peers.length && (
                 <div className="mt-6 flex items-center gap-2">
                   <Button variant="secondary" size="default" on:click={openAddPeer}>
                     <span
@@ -798,20 +926,22 @@ export default function App() {
                     </span>
                   </div>
                 </div>
-                <Button
-                  size="compact"
-                  variant="ghost"
-                  className="shrink-0 text-neutral-80 hover:text-neutral-110"
-                  title={model.self.downloadsDir}
-                  aria-label="打开下载目录"
-                  on:click={() => void openDownloadsFolder()}
-                >
-                  <span
-                    className="icon-[codicon--folder-opened] align-middle text-[13px] sm:mr-1"
-                    aria-hidden="true"
-                  />
-                  <span className="max-[760px]:hidden">下载目录</span>
-                </Button>
+                {!browserMode && (
+                  <Button
+                    size="compact"
+                    variant="ghost"
+                    className="shrink-0 text-neutral-80 hover:text-neutral-110"
+                    title={model.self.downloadsDir}
+                    aria-label="打开下载目录"
+                    on:click={() => void openDownloadsFolder()}
+                  >
+                    <span
+                      className="icon-[codicon--folder-opened] align-middle text-[13px] sm:mr-1"
+                      aria-hidden="true"
+                    />
+                    <span className="max-[760px]:hidden">下载目录</span>
+                  </Button>
+                )}
               </div>
 
               <div ref={chatScroll} className="min-h-0 flex-1 overflow-y-auto px-5 py-4">

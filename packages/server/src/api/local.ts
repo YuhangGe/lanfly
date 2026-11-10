@@ -140,6 +140,11 @@ async function handleLocalUpload(
     return;
   }
 
+  if (app.network.outgoing.has(transferId)) {
+    await app.network.upload(app.identity.id, transferId, request, response);
+    return;
+  }
+
   const transfer = app.transfers.get(transferId);
   if (!transfer || transfer.direction !== 'out') {
     sendError(response, 404, ErrorCodes.TRANSFER_NOT_FOUND);

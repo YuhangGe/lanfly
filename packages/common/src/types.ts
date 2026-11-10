@@ -6,6 +6,9 @@ export interface PeerInfo {
   version: string;
   /** 该设备是否启用了 --secret 密码房间。 */
   secret: boolean;
+  /** 浏览器设备通过所属主机转发。 */
+  kind?: 'browser';
+  gatewayId?: string;
 }
 
 export interface SelfInfo extends PeerInfo {
@@ -69,6 +72,10 @@ export interface TransferView {
   /** 接收完成后实际保存的文件名。 */
   savedName?: string;
   error?: string;
+  downloadUrl?: string;
+  expiresAt?: number;
+  downloadedAt?: number;
+  expired?: boolean;
 }
 
 export interface AppState {

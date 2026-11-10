@@ -52,7 +52,13 @@ function transferLabel(transfer: TransferView | undefined): string {
     case 'receiving':
       return '接收中…';
     case 'completed':
-      return transfer.direction === 'out' ? '已送达' : '已保存到下载目录';
+      if (transfer.expired) return '下载已过期';
+      if (transfer.direction === 'out') {
+        if (!transfer.expiresAt) return '已送达';
+        return transfer.downloadedAt ? '对方已下载' : '可下载 · 保留 30 分钟';
+      }
+      if (!transfer.downloadUrl) return '已保存到下载目录';
+      return transfer.downloadedAt ? '已下载 · 30 分钟内可重复下载' : '可下载 · 保留 30 分钟';
     case 'failed':
       return transfer.direction === 'out' ? '发送失败' : '接收失败';
     case 'canceled':
@@ -109,6 +115,17 @@ export default function MessageItem(props: {
                   {formatBytes(props.message.file?.size ?? 0)} ·{' '}
                   {transferLabel(props.message.transfer)}
                 </div>
+                {props.message.transfer?.downloadUrl &&
+                  props.message.transfer.status === 'completed' &&
+                  !props.message.transfer.expired && (
+                    <a
+                      className="mt-1 inline-block text-blue-40 underline"
+                      href={props.message.transfer.downloadUrl}
+                      download
+                    >
+                      下载文件
+                    </a>
+                  )}
                 {isActive(props.message.transfer) && (
                   <div className="mt-1.5">
                     <div

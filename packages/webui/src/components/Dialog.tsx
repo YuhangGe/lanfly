@@ -16,7 +16,7 @@ export default function Dialog(props: {
   descriptionId?: string;
 }) {
   const element = ref<HTMLDialogElement>();
-  const titleId = crypto.randomUUID();
+  const titleId = `dialog-${Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) => b.toString(16).padStart(2, '0')).join('')}`;
 
   onMount(() => {
     const dialog = element.value!;

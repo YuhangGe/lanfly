@@ -5,6 +5,7 @@ import Button from './Button';
 
 export default function PeerList(props: {
   peers: PeerView[];
+  readOnly?: boolean;
   activeId: string;
   unread: Record<string, number>;
   onSelect: (id: string) => void;
@@ -17,7 +18,7 @@ export default function PeerList(props: {
         <div className="px-3 py-8 text-center text-[11.5px] leading-relaxed text-neutral-80">
           正在寻找局域网设备…
           <br />
-          也可以右上角手动添加 IP
+          {props.readOnly ? '等待接入主机发现设备' : '也可以右上角手动添加 IP'}
         </div>
       )}
       {props.peers.map((peer) => (
@@ -47,7 +48,11 @@ export default function PeerList(props: {
                 )}
               </span>
               <span className="mt-0.5 block truncate text-[10.5px] text-neutral-80">
-                {peer.online ? `${peer.host}:${peer.port}` : '离线'}
+                {peer.online
+                  ? peer.kind === 'browser'
+                    ? '浏览器设备'
+                    : `${peer.host}:${peer.port}`
+                  : '离线'}
               </span>
             </span>
             {props.unread[peer.id] > 0 && (
@@ -56,34 +61,36 @@ export default function PeerList(props: {
               </span>
             )}
           </button>
-          <div className="absolute top-1/2 right-1.5 flex -translate-y-1/2 items-center gap-0.5 rounded bg-neutral-40/95 opacity-0 shadow-toolbar transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
-            {!peer.online && (
+          {!props.readOnly && peer.kind !== 'browser' && (
+            <div className="absolute top-1/2 right-1.5 flex -translate-y-1/2 items-center gap-0.5 rounded bg-neutral-40/95 opacity-0 shadow-toolbar transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
+              {!peer.online && (
+                <Button
+                  size="icon"
+                  className="text-neutral-90 hover:text-blue-40"
+                  title={`重新连接 ${peer.name}`}
+                  aria-label={`重新连接 ${peer.name}`}
+                  on:click={(event) => {
+                    event.stopPropagation();
+                    props.onReconnect(peer);
+                  }}
+                >
+                  <span className="icon-[codicon--refresh] text-[14px]" aria-hidden="true" />
+                </Button>
+              )}
               <Button
                 size="icon"
-                className="text-neutral-90 hover:text-blue-40"
-                title={`重新连接 ${peer.name}`}
-                aria-label={`重新连接 ${peer.name}`}
+                className="text-neutral-90 hover:text-red-40"
+                title={`移除 ${peer.name}`}
+                aria-label={`移除 ${peer.name}`}
                 on:click={(event) => {
                   event.stopPropagation();
-                  props.onReconnect(peer);
+                  props.onRemove(peer.id);
                 }}
               >
-                <span className="icon-[codicon--refresh] text-[14px]" aria-hidden="true" />
+                <span className="icon-[codicon--close] text-[14px]" aria-hidden="true" />
               </Button>
-            )}
-            <Button
-              size="icon"
-              className="text-neutral-90 hover:text-red-40"
-              title={`移除 ${peer.name}`}
-              aria-label={`移除 ${peer.name}`}
-              on:click={(event) => {
-                event.stopPropagation();
-                props.onRemove(peer.id);
-              }}
-            >
-              <span className="icon-[codicon--close] text-[14px]" aria-hidden="true" />
-            </Button>
-          </div>
+            </div>
+          )}
         </div>
       ))}
     </div>

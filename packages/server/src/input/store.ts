@@ -32,12 +32,12 @@ export class InputStore {
   readonly file: string;
   data: SavedInput | undefined;
   key: KeyObject | undefined;
-  readonly #storage: DataStore;
+  readonly storage: DataStore;
   readonly #legacyFile: string;
 
   constructor(directory?: string) {
-    this.#storage = new DataStore(directory);
-    this.file = this.#storage.file;
+    this.storage = new DataStore(directory);
+    this.file = this.storage.file;
     this.#legacyFile = path.join(
       directory ??
         process.env.LANFLY_CONFIG_DIR ??
@@ -48,8 +48,8 @@ export class InputStore {
 
   async load(): Promise<void> {
     try {
-      await this.#storage.load();
-      const saved = this.#storage.get('input');
+      await this.storage.load();
+      const saved = this.storage.get('input');
       if (saved !== undefined) this.data = savedSchema.parse(saved);
       else {
         try {
@@ -87,10 +87,10 @@ export class InputStore {
   }
 
   async save(): Promise<void> {
-    await this.#storage.set('input', this.data);
+    await this.storage.set('input', this.data);
   }
 
   async flush(): Promise<void> {
-    await this.#storage.flush();
+    await this.storage.flush();
   }
 }

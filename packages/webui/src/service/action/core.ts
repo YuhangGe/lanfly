@@ -2,6 +2,8 @@ import type { ActionResult, ActionResultError } from '@lanfly/common';
 
 import { parse, stringify } from 'superjson';
 
+import { browserMode } from '../browser';
+
 const cache = new Map<string, ServerActionFunction>();
 
 const ErrorMessages: Record<string | number, string> = {
@@ -60,7 +62,7 @@ function getServerAction(action: string): ServerActionFunction {
   const fn: ServerActionFunction = async ({ input, toastError = true } = {}) => {
     try {
       const body = input === undefined ? undefined : stringify(input);
-      const response = await fetch(`/__rpc/${action}`, {
+      const response = await fetch(`${browserMode ? '/api/v1/browser/rpc/' : '/__rpc/'}${action}`, {
         method: 'POST',
         body,
         headers: body === undefined ? {} : { 'content-type': 'application/json' },

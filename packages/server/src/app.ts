@@ -22,6 +22,7 @@ import { ReplayGuard, randomToken } from './core/security';
 import { MulticastDiscovery } from './discovery/multicast';
 import { InputService } from './input/service';
 import { logger } from './logger';
+import { BrowserNetwork } from './services/browser-network';
 import {
   cleanupStaleTempFiles,
   ensureDir,
@@ -45,6 +46,7 @@ export class Application {
   readonly replayGuard = new ReplayGuard();
   readonly config: ServerConfig;
   readonly input: InputService;
+  readonly network: BrowserNetwork;
 
   #server: http.Server | undefined;
   #discovery: MulticastDiscovery | undefined;
@@ -60,6 +62,9 @@ export class Application {
     this.transfers = new TransferStore(this.events);
     this.remote = new RemoteClient(this.identity, this.identity.room);
     this.input = new InputService(this.identity.name, this.events);
+    this.network = new BrowserNetwork(this);
+    this.events.peersProvider = () => this.network.peers();
+    this.events.onPeersChanged = () => this.network.publishBrowserPeers();
   }
 
   async start(): Promise<number> {
@@ -78,6 +83,12 @@ export class Application {
     this.#server = server;
     const port = await listenWithFallback(server, this.config.port, 20);
     this.identity.port = port;
+    try {
+      await this.network.start();
+    } catch (error) {
+      await this.stop();
+      throw error;
+    }
     this.input.resume();
 
     if (!this.config.noDiscovery) {
@@ -119,6 +130,8 @@ export class Application {
       this.transfers.cancel(transfer.id);
     }
     this.events.stop();
+    // Close browser SSE connections before waiting for the HTTP server.
+    for (const browser of this.network.browsers.values()) browser.events.stop();
     const server = this.#server;
     this.#server = undefined;
     if (server) {
@@ -130,18 +143,21 @@ export class Application {
         }, 800).unref();
       });
     }
+    await this.network.stop();
   }
 
   getState(): AppState {
     return {
       self: this.identity.self,
-      peers: this.peers.list(),
+      peers: this.network.peers(),
       messages: this.messages.list(),
       transfers: this.transfers.list(),
     };
   }
 
   async sendMessage(input: { peerId: string; text: string }): Promise<ChatMessage> {
+    if (this.network.peers().some((p) => p.id === input.peerId && p.kind === 'browser'))
+      return this.network.sendText(this.identity.id, input.peerId, input.text);
     const peer = this.#requirePeer(input.peerId);
     const message = this.messages.addOutgoingText(peer.id, input.text);
     return this.#deliverText(peer, message);
@@ -153,6 +169,8 @@ export class Application {
     if (message.direction !== 'out' || message.kind !== 'text' || message.status !== 'failed') {
       throwActionError(ErrorCodes.MESSAGE_NOT_RETRYABLE);
     }
+    if (this.network.peers().some((p) => p.id === message.peerId && p.kind === 'browser'))
+      return this.network.retry(this.identity.id, message.id);
     const peer = this.#requirePeer(message.peerId);
     this.messages.setStatus(message.id, 'sending');
     return this.#deliverText(peer, this.messages.get(message.id)!);
@@ -210,6 +228,8 @@ export class Application {
   }
 
   async sendFile(input: { peerId: string; file: FileMeta }): Promise<SendFileResult> {
+    if (this.network.peers().some((p) => p.id === input.peerId && p.kind === 'browser'))
+      return this.network.sendFile(this.identity.id, input.peerId, input.file);
     const peer = this.#requirePeer(input.peerId);
     const transfer = this.transfers.createOutgoing(peer.id, input.file);
     this.messages.addOutgoingFile(peer.id, input.file, transfer.id);

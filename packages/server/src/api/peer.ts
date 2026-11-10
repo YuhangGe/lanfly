@@ -10,6 +10,7 @@ import {
   peerMessageSchema,
   transferOfferSchema,
 } from '@lanfly/common';
+import { lookup } from 'node:dns/promises';
 import { createWriteStream } from 'node:fs';
 import { unlink } from 'node:fs/promises';
 import path from 'node:path';
@@ -33,6 +34,59 @@ export async function handlePeerRequest(
 ): Promise<void> {
   const host = clientAddress(request) || '0.0.0.0';
   const fullPath = `${pathname}${search}`;
+
+  if (pathname.startsWith('/api/v1/peer/browser-upload/') && request.method === 'PUT') {
+    try {
+      await app.network.receiveUpload(
+        pathname.slice('/api/v1/peer/browser-upload/'.length),
+        String(request.headers['x-lanfly-transfer-token'] ?? ''),
+        request,
+        response,
+      );
+    } catch (error) {
+      if (!response.headersSent)
+        sendError(
+          response,
+          error instanceof HttpError ? error.status : 500,
+          error instanceof Error ? error.message : 'TRANSFER_UPLOAD_FAILED',
+        );
+    }
+    return;
+  }
+  if (pathname.startsWith('/api/v1/peer/browser/') && request.method === 'POST') {
+    const body = await readJsonAuthorized(app, request, response, fullPath);
+    if (!body) return;
+    const id = String(request.headers['x-lanfly-id'] ?? '');
+    const peer = app.peers.get(id);
+    const sameHost =
+      peer &&
+      (peer.host === host ||
+        (await lookup(peer.host, { all: true }).catch(() => [])).some(
+          (address) => address.address === host,
+        ));
+    if (!peer || !sameHost) {
+      sendError(response, 403, 'DIRECT_PEER_REQUIRED');
+      return;
+    }
+    try {
+      if (pathname.endsWith('/roster')) {
+        app.network.acceptRoster(body, id);
+        sendJson(response, 200, { from: app.identity.info, browsers: app.network.localRoster() });
+      } else if (pathname.endsWith('/receipt')) {
+        app.network.receiveReceipt(body, id);
+        sendJson(response, 200, { ok: true });
+      } else if (pathname.endsWith('/deliver')) {
+        sendJson(response, 200, app.network.receive(body, id));
+      } else sendError(response, 404, 'NOT_FOUND');
+    } catch (error) {
+      sendError(
+        response,
+        error instanceof HttpError ? error.status : 400,
+        error instanceof Error ? error.message : 'BAD_REQUEST',
+      );
+    }
+    return;
+  }
 
   if (pathname === PEER_INFO_PATH) {
     if (request.method !== 'GET') {

@@ -79,7 +79,29 @@ export class RemoteClient {
     return (data as { token: string }).token;
   }
 
-  openUpload(target: PeerTarget, transferId: string, token: string, size: number): PendingUpload {
+  browserRequest(
+    target: PeerTarget,
+    path: string,
+    payload: unknown,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
+    return this.#requestJson(
+      target,
+      'POST',
+      `/api/v1/peer/browser/${path}`,
+      payload,
+      REQUEST_TIMEOUT_MS,
+      signal,
+    );
+  }
+
+  openUpload(
+    target: PeerTarget,
+    transferId: string,
+    token: string,
+    size: number,
+    uploadPath?: string,
+  ): PendingUpload {
     let resolveDone: (value: UploadResponse) => void;
     let rejectDone: (error: unknown) => void;
     const done = new Promise<UploadResponse>((resolve, reject) => {
@@ -91,7 +113,7 @@ export class RemoteClient {
       {
         hostname: target.host,
         port: target.port,
-        path: peerTransferPath(transferId),
+        path: uploadPath ?? peerTransferPath(transferId),
         method: 'PUT',
         agent: false,
         headers: {
@@ -133,6 +155,7 @@ export class RemoteClient {
     path: string,
     payload: unknown,
     timeoutMs = REQUEST_TIMEOUT_MS,
+    signal?: AbortSignal,
   ): Promise<unknown> {
     const body = payload === undefined ? Buffer.alloc(0) : Buffer.from(JSON.stringify(payload));
     const signed = createSignedHeaders(this.room, this.identity.id, { method, path, body });
@@ -149,7 +172,9 @@ export class RemoteClient {
       method,
       headers,
       redirect: 'error',
-      signal: AbortSignal.timeout(timeoutMs),
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)])
+        : AbortSignal.timeout(timeoutMs),
     };
     if (body.length) init.body = body;
 
