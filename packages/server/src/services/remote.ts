@@ -12,9 +12,11 @@ import {
   PEER_INFO_PATH,
   PEER_MESSAGES_PATH,
   PEER_TRANSFERS_PATH,
+  desktopRequestResponseSchema,
   peerInfoSchema,
   peerTransferPath,
   REQUEST_TIMEOUT_MS,
+  type DesktopRequestResponse,
   type PeerInfo,
   type TransferOfferPayload,
 } from '@lanfly/common';
@@ -75,8 +77,11 @@ export class RemoteClient {
     await this.#requestJson(target, 'POST', PEER_MESSAGES_PATH, payload);
   }
 
-  async desktopRequest(target: PeerTarget, payload: unknown): Promise<void> {
-    await this.#requestJson(target, 'POST', PEER_DESKTOP_REQUEST_PATH, payload);
+  async desktopRequest(target: PeerTarget, payload: unknown): Promise<DesktopRequestResponse> {
+    const data = await this.#requestJson(target, 'POST', PEER_DESKTOP_REQUEST_PATH, payload);
+    const parsed = desktopRequestResponseSchema.safeParse(data);
+    if (!parsed.success) throwActionError(ErrorCodes.PEER_PROTOCOL);
+    return parsed.data;
   }
 
   async desktopAccept(target: PeerTarget, payload: unknown): Promise<void> {

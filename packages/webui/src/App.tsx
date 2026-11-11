@@ -14,6 +14,7 @@ import {
   appState,
   cancelTransfer,
   connectPeer,
+  desktopState,
   forgetPeer,
   openDownloads,
   retryMessage,
@@ -196,6 +197,24 @@ export default function App() {
     updateTitle();
   }
 
+  async function resumeDesktop() {
+    if (browserMode) return;
+    const [error, result] = await desktopState({ toastError: false });
+    if (error || !result) return;
+    const active = result.sessions.find(
+      (session) =>
+        session.role === 'controlled' &&
+        (session.phase === 'accepted' ||
+          session.phase === 'connecting' ||
+          session.phase === 'connected'),
+    );
+    if (!active || model.desktopOpen) return;
+    model.desktopPeerId = active.peerId;
+    model.desktopSessionId = active.sessionId;
+    model.desktopOpen = true;
+    pushToast(`${active.peerName} 正在查看并控制你的屏幕`, 'info');
+  }
+
   async function refresh() {
     const [error, state] = await appState({ toastError: false });
     if (error || !state) {
@@ -207,6 +226,7 @@ export default function App() {
       return;
     }
     applyState(state);
+    void resumeDesktop();
   }
 
   function applyPeers(peers: PeerView[]) {
@@ -347,11 +367,12 @@ export default function App() {
       const payload = parseEvent<DesktopEvent>(event);
       if (!payload) return;
       emitDesktopEvent(payload);
-      if (payload.type === 'request' && !browserMode) {
-        model.desktopPeerId = model.activePeerId;
+      if (payload.type === 'accepted' && payload.session.role === 'controlled' && !browserMode) {
+        model.desktopPeerId = payload.session.peerId;
         model.desktopSessionId = payload.session.sessionId;
         model.inputOpen = false;
         model.desktopOpen = true;
+        pushToast(`${payload.session.peerName} 已开始查看并控制你的屏幕`, 'info');
       }
     });
   }

@@ -4,7 +4,7 @@
 
 - feat: Room ID 持久化组网，手机打开网页直接加入；文件按需全程流式传输，不缓存中转文件，所有数据明文传输。
 - feat: 键鼠无需配对，连接时选择本机角色，对端自动切换为相反角色。
-- feat: 新增 macOS 局域网远程桌面：ScreenCaptureKit + VideoToolbox H.264 + webrtc-rs，浏览器原生 WebRTC 播放；被控端独立授权查看与远程控制。
+- feat: 新增 macOS 局域网远程桌面：ScreenCaptureKit + VideoToolbox H.264 + webrtc-rs，浏览器原生 WebRTC 播放；请求自动接受，鼠标键盘控制随远程桌面自动开启。
 - fix: 提升远程桌面 WebRTC 稳定性：修正 H.264 Level 协商、按关键帧重置编码队列、非阻塞帧发送、ICE 直连候选和采集清理超时。
 - fix: 修复键鼠共享时 Caps Lock 中英切换仍在服务端生效、客户端未切换的问题。
 

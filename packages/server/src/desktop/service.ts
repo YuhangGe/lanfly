@@ -149,8 +149,8 @@ export class DesktopService {
       peerName: target.name,
       peerHost: target.host,
       peerPort: target.port,
-      controlRequested: input.control,
-      control: false,
+      controlRequested: true,
+      control: true,
       phase: 'pending',
       width: 0,
       height: 0,
@@ -160,18 +160,47 @@ export class DesktopService {
       nativeStarted: false,
     };
     this.#sessions.set(session.id, session);
-    await this.#disableInput();
     try {
-      await this.app.remote.desktopRequest(this.#target(session), {
+      const accepted = await this.app.remote.desktopRequest(this.#target(session), {
         sessionId: session.id,
         from: this.app.identity.info,
-        control: input.control,
+        control: true,
         viewer,
         bitrate: session.bitrate,
       });
+      if (accepted.from.id !== session.peerId) {
+        throwActionError(ErrorCodes.DESKTOP_PEER_MISMATCH);
+      }
+      session.token = accepted.token;
+      session.control = true;
+      session.controlRequested = true;
+      session.phase = 'accepted';
+      session.width = accepted.width;
+      session.height = accepted.height;
+      session.expiresAt = Date.now() + DESKTOP_ACCEPT_TTL_MS;
+      if (!accepted.screenRecording) {
+        session.error = ErrorCodes.DESKTOP_PERMISSION;
+        await this.app.remote
+          .desktopStop(
+            this.#target(session),
+            {
+              sessionId: session.id,
+              from: this.app.identity.info,
+              reason: ErrorCodes.DESKTOP_PERMISSION,
+            },
+            session.token,
+          )
+          .catch(() => undefined);
+      }
+      await this.#disableInput();
+      this.#emit(session.owner, { type: 'accepted', session: this.#view(session) });
     } catch (error) {
       this.#sessions.delete(session.id);
       logger.debug(`远程桌面请求失败：${String(error)}`);
+      if (error && typeof error === 'object' && 'code' in error) {
+        const code = String((error as { code: unknown }).code);
+        if (code.startsWith('DESKTOP_')) throwActionError(code);
+      }
       throwActionError(ErrorCodes.PEER_UNREACHABLE);
     }
     return this.#view(session);
@@ -581,6 +610,7 @@ export class DesktopService {
     const value = desktopPeerRequestSchema.parse(payload);
     await this.#verifyPeer(value.from, sourceHost, sourceId, true);
     if (this.#activeSession()) throwActionError(ErrorCodes.DESKTOP_BUSY);
+    const status = this.status();
     const now = Date.now();
     const session: Session = {
       id: value.sessionId,
@@ -591,19 +621,28 @@ export class DesktopService {
       peerHost: sourceHost,
       peerPort: value.from.port,
       token: randomToken(),
-      controlRequested: value.control,
-      control: false,
-      phase: 'pending',
-      width: 0,
-      height: 0,
+      controlRequested: true,
+      control: true,
+      phase: 'accepted',
+      width: status.display?.width ?? 0,
+      height: status.display?.height ?? 0,
       bitrate: value.bitrate ?? DESKTOP_DEFAULT_BITRATE,
       createdAt: now,
-      expiresAt: now + DESKTOP_REQUEST_TTL_MS,
+      expiresAt: now + DESKTOP_ACCEPT_TTL_MS,
       nativeStarted: false,
     };
     this.#sessions.set(session.id, session);
-    this.#emit(session.owner, { type: 'request', session: this.#view(session) });
-    return { ok: true, pending: true };
+    await this.#disableInput();
+    this.#emit(session.owner, { type: 'accepted', session: this.#view(session) });
+    return {
+      accepted: true,
+      from: this.app.identity.info,
+      token: session.token,
+      control: true,
+      width: session.width,
+      height: session.height,
+      screenRecording: status.screenRecording,
+    };
   }
 
   async #peerAccept(payload: unknown, sourceHost: string, sourceId: string): Promise<unknown> {
@@ -663,7 +702,7 @@ export class DesktopService {
               // Bind the wildcard so ICE can advertise every LAN interface, not just the
               // discovery-selected primary IPv4 address.
               localAddress: '0.0.0.0',
-              control: session.control,
+              control: true,
             }),
           ),
         ) as { width?: number; height?: number };

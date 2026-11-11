@@ -89,7 +89,6 @@ export type DesktopEvent =
 
 export const desktopRequestInput = z.object({
   peerId: z.string().min(1).max(64),
-  control: z.boolean().default(true),
   bitrate: z.number().int().min(DESKTOP_MIN_BITRATE).max(DESKTOP_MAX_BITRATE).optional(),
 });
 
@@ -131,7 +130,9 @@ export type DesktopAcceptInput = z.output<typeof desktopAcceptInput>;
 export const desktopPeerRequestSchema = z.object({
   sessionId: z.string().min(1).max(64),
   from: peerInfoSchema,
-  control: z.boolean(),
+  // Kept optional for wire compatibility. Remote control is always enabled for desktop
+  // sessions; the target no longer has a separate approval step.
+  control: z.boolean().optional(),
   viewer: z.string().min(1).max(64).optional(),
   bitrate: z.number().int().min(DESKTOP_MIN_BITRATE).max(DESKTOP_MAX_BITRATE).optional(),
 });
@@ -184,6 +185,18 @@ export const desktopPeerErrorSchema = z.object({
   from: peerInfoSchema,
   error: z.string().min(1).max(128),
 });
+
+/** Automatic acceptance returned by the controlled host. The token never reaches the browser. */
+export const desktopRequestResponseSchema = z.object({
+  accepted: z.literal(true),
+  from: peerInfoSchema,
+  token: z.string().min(32).max(128),
+  control: z.boolean(),
+  width: z.number().int().min(0).max(16384),
+  height: z.number().int().min(0).max(16384),
+  screenRecording: z.boolean(),
+});
+export type DesktopRequestResponse = z.infer<typeof desktopRequestResponseSchema>;
 
 export type DesktopPeerRequest = z.infer<typeof desktopPeerRequestSchema>;
 export type DesktopPeerAccept = z.infer<typeof desktopPeerAcceptSchema>;

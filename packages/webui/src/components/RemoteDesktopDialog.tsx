@@ -9,11 +9,9 @@ import {
   type PeerView,
 } from '@lanfly/common';
 import {
-  desktopAccept,
   desktopIce,
   desktopOffer,
   desktopPermissions,
-  desktopReject,
   desktopRequest,
   desktopState,
   desktopStatus,
@@ -88,15 +86,12 @@ export default function RemoteDesktopDialog(props: {
     phase: 'idle' as UiPhase,
     mode: 'controller' as 'controller' | 'controlled',
     session: null as DesktopSessionView | null,
-    incoming: null as DesktopSessionView | null,
     error: '',
     busy: false,
     status: null as DesktopStatus | null,
     statusLoading: true,
     peerId: '',
-    controlRequested: true,
-    controlGranted: false,
-    grantControl: false,
+    controlGranted: true,
     bitrate: DESKTOP_DEFAULT_BITRATE,
     videoReady: false,
     fullscreen: false,
@@ -142,18 +137,14 @@ export default function RemoteDesktopDialog(props: {
     model.mode = session.role;
     model.phase = statusFromPhase(session.phase);
     model.controlGranted = session.control;
-    model.grantControl = session.control;
     model.width = session.width;
     model.height = session.height;
     model.error = session.error ?? '';
-    if (session.role === 'controlled' && session.phase === 'pending') {
-      model.incoming = session;
-      model.phase = 'waiting';
-    } else if (session.role === 'controller') {
+    if (session.role === 'controller') {
       model.peerId = session.peerId;
       if (session.phase === 'accepted') {
         model.phase = 'connecting';
-        void connect(session);
+        if (!session.error) void connect(session);
       } else if (session.phase === 'connecting' || session.phase === 'connected') {
         model.phase = 'error';
         model.error = '这个会话已经由另一个页面建立，请先结束会话后重试。';
@@ -172,10 +163,7 @@ export default function RemoteDesktopDialog(props: {
     const initial = props.initialSessionId
       ? sessions.find((session) => session.sessionId === props.initialSessionId)
       : undefined;
-    const incoming = sessions.find(
-      (session) => session.role === 'controlled' && session.phase === 'pending',
-    );
-    const target = initial ?? incoming ?? sessions[0];
+    const target = initial ?? sessions[0];
     if (target) applySession(target);
     else setInitialPeer();
   }
@@ -226,11 +214,7 @@ export default function RemoteDesktopDialog(props: {
     model.error = '';
     try {
       const [error, session] = await desktopRequest({
-        input: {
-          peerId: model.peerId,
-          control: model.controlRequested,
-          bitrate: model.bitrate,
-        },
+        input: { peerId: model.peerId, bitrate: model.bitrate },
         toastError: false,
       });
       if (!mounted) return;
@@ -241,53 +225,13 @@ export default function RemoteDesktopDialog(props: {
       }
       model.session = session;
       model.mode = 'controller';
-      model.phase = 'waiting';
-      model.controlGranted = false;
-      model.error = '';
+      model.controlGranted = true;
+      model.error = session.error ? new ActionError({ code: session.error }).message : '';
+      model.phase = session.error ? 'error' : statusFromPhase(session.phase);
+      if (!session.error && session.phase === 'accepted') void connect(session);
     } finally {
       if (mounted) model.busy = false;
     }
-  }
-
-  async function acceptIncoming() {
-    const session = model.incoming;
-    if (!session || model.busy) return;
-    model.busy = true;
-    model.error = '';
-    try {
-      const [error, accepted] = await desktopAccept({
-        input: {
-          sessionId: session.sessionId,
-          control: model.grantControl && session.controlRequested,
-        },
-        toastError: false,
-      });
-      if (!mounted) return;
-      if (error || !accepted) {
-        model.error = errorText(error) || '无法授权远程桌面';
-        return;
-      }
-      model.session = accepted;
-      model.incoming = null;
-      model.controlGranted = accepted.control;
-      model.phase = 'connecting';
-    } finally {
-      if (mounted) model.busy = false;
-    }
-  }
-
-  async function rejectIncoming() {
-    const session = model.incoming;
-    if (!session) {
-      await close();
-      return;
-    }
-    await desktopReject({ input: { sessionId: session.sessionId }, toastError: false });
-    if (!mounted) return;
-    model.incoming = null;
-    model.session = { ...session, phase: 'rejected' };
-    model.phase = 'ended';
-    await close();
   }
 
   function bindDataChannel(channel: RTCDataChannel) {
@@ -375,9 +319,7 @@ export default function RemoteDesktopDialog(props: {
             break;
         }
       };
-      if (session.control) {
-        bindDataChannel(peer.createDataChannel('lanfly-control', { ordered: true }));
-      }
+      bindDataChannel(peer.createDataChannel('lanfly-control', { ordered: true }));
       peer.addTransceiver('video', { direction: 'recvonly' });
       const offer = await peer.createOffer();
       await peer.setLocalDescription(offer);
@@ -433,28 +375,19 @@ export default function RemoteDesktopDialog(props: {
   }
 
   function handleEvent(event: DesktopEvent) {
-    if (!mounted) return;
-    if (event.type === 'request') {
-      if (props.browserMode) return;
-      const current = model.session;
-      if (current && current.sessionId !== event.session.sessionId) return;
-      model.incoming = event.session;
-      model.session = event.session;
-      model.mode = 'controlled';
-      model.phase = 'waiting';
-      model.error = '';
-      model.grantControl = false;
-      model.controlGranted = false;
-      void refreshStatus();
-      return;
-    }
+    if (!mounted || event.type === 'request') return;
     if (event.type === 'accepted') {
       const current = model.session;
       if (!current || current.sessionId !== event.session.sessionId) return;
       model.session = event.session;
-      model.controlGranted = event.session.control;
+      model.controlGranted = true;
       model.width = event.session.width;
       model.height = event.session.height;
+      if (event.session.error) {
+        model.phase = 'error';
+        model.error = new ActionError({ code: event.session.error }).message;
+        return;
+      }
       model.phase = 'connecting';
       if (event.session.role === 'controller') void connect(event.session);
       return;
@@ -531,17 +464,13 @@ export default function RemoteDesktopDialog(props: {
     cleanupPeer();
     model.phase = 'ended';
     if (!session) return;
-    const [error] =
-      session.role === 'controlled' && session.phase === 'pending'
-        ? await desktopReject({ input: { sessionId: session.sessionId }, toastError: false })
-        : await desktopStop({
-            input: { sessionId: session.sessionId, reason },
-            toastError: false,
-          });
+    const [error] = await desktopStop({
+      input: { sessionId: session.sessionId, reason },
+      toastError: false,
+    });
     if (error && error.code !== 'DESKTOP_NOT_FOUND' && error.code !== 'DESKTOP_STATE')
       model.error = errorText(error);
     model.session = { ...session, phase: 'stopped' };
-    model.incoming = null;
   }
 
   async function close() {
@@ -634,83 +563,11 @@ export default function RemoteDesktopDialog(props: {
   return (
     <Dialog title="远程桌面" size="screen" onClose={() => void close()} canClose={!model.busy}>
       <div className="flex flex-col gap-3 text-[12px] text-neutral-90">
-        {model.incoming && (
-          <div className="rounded-control border border-neutral-50 bg-neutral-20 p-3">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <strong className="text-[13px] text-neutral-110">
-                  {model.incoming.peerName} 请求查看你的屏幕
-                </strong>
-                <p className="mt-1 mb-0 leading-relaxed text-neutral-80">
-                  接受后对方会通过 WebRTC 直接接收屏幕画面。查看屏幕和远程控制是两项独立权限。
-                </p>
-              </div>
-              <span className="rounded-full border border-amber-30 bg-amber-10 px-2 py-0.5 text-[10px] text-amber-40">
-                等待授权
-              </span>
-            </div>
-            {model.incoming.controlRequested ? (
-              <label className="mt-3 flex items-center gap-2 text-[11.5px]">
-                <input
-                  type="checkbox"
-                  checked={model.grantControl}
-                  on:change={(event) => {
-                    model.grantControl = (event.target as HTMLInputElement).checked;
-                  }}
-                />
-                允许对方远程控制鼠标和键盘
-              </label>
-            ) : (
-              <p className="mt-2 mb-0 text-[11px] text-neutral-70">
-                对方只请求查看屏幕，未请求控制。
-              </p>
-            )}
-            {!props.browserMode && model.status && !model.status.available && (
-              <p className="mt-2 mb-0 text-red-40">
-                原生组件不可用，请重新安装包含桌面模块的 lanfly 构建。
-              </p>
-            )}
-            {!props.browserMode &&
-              model.status &&
-              model.status.available &&
-              !model.status.screenRecording && (
-                <div className="mt-2 rounded-control border border-amber-30 bg-amber-10 p-2 text-[11px] text-amber-40">
-                  需要屏幕录制权限。
-                  <Button
-                    size="compact"
-                    variant="secondary"
-                    className="ml-1"
-                    disabled={model.busy}
-                    on:click={() => void requestPermissions()}
-                  >
-                    请求系统授权
-                  </Button>
-                </div>
-              )}
-            <div className="mt-3 flex justify-end gap-2">
-              <Button
-                variant="secondary"
-                disabled={model.busy}
-                on:click={() => void rejectIncoming()}
-              >
-                拒绝
-              </Button>
-              <Button
-                variant="primary"
-                disabled={model.busy || (model.status ? !model.status.screenRecording : false)}
-                on:click={() => void acceptIncoming()}
-              >
-                接受
-              </Button>
-            </div>
-          </div>
-        )}
-
-        {!model.incoming && !model.session && (
+        {!model.session && (
           <div className="rounded-control border border-neutral-50 bg-neutral-20 p-3">
             <p className="m-0 leading-relaxed text-neutral-80">
-              选择一台局域网内的 Mac，请求对方授权后即可实时查看并操作其桌面。视频通过 WebRTC
-              直接传输，不经过 Node.js 中转。
+              选择一台局域网内的 Mac，发起后对方自动接受并开启鼠标键盘控制。视频通过 WebRTC
+              直接传输，不经过 Node.js 中转。被控端需预先授予屏幕录制和辅助功能权限。
             </p>
             <div className="mt-3 grid grid-cols-2 gap-3 max-[620px]:grid-cols-1">
               <label className="flex flex-col gap-1.5">
@@ -746,16 +603,9 @@ export default function RemoteDesktopDialog(props: {
                 </select>
               </label>
             </div>
-            <label className="mt-3 flex items-center gap-2 text-[11.5px]">
-              <input
-                type="checkbox"
-                checked={model.controlRequested}
-                on:change={(event) => {
-                  model.controlRequested = (event.target as HTMLInputElement).checked;
-                }}
-              />
-              请求远程控制（对方可单独拒绝，仅查看不受影响）
-            </label>
+            <p className="mt-3 mb-0 text-[11px] leading-relaxed text-neutral-70">
+              建立后会自动开启鼠标和键盘控制，不需要对方再确认。
+            </p>
             <div className="mt-3 flex items-center justify-between gap-3">
               <span className="text-[10.5px] leading-relaxed text-neutral-70">
                 手机浏览器也可作为查看端；控制端需要 macOS 的辅助功能权限。
@@ -765,13 +615,13 @@ export default function RemoteDesktopDialog(props: {
                 disabled={model.busy || !model.peerId}
                 on:click={() => void startRequest()}
               >
-                {model.busy ? '正在请求…' : '请求远程桌面'}
+                {model.busy ? '正在连接…' : '开始远程桌面'}
               </Button>
             </div>
           </div>
         )}
 
-        {!model.incoming && model.session && (
+        {model.session && (
           <div className="flex items-center justify-between gap-3 rounded-control border border-neutral-50 bg-neutral-20 px-3 py-2">
             <div className="flex min-w-0 items-center gap-2">
               <span
@@ -790,13 +640,6 @@ export default function RemoteDesktopDialog(props: {
                 (model.phase === 'connecting' || model.phase === 'connected') && (
                   <span className="rounded-full border border-green-40/40 bg-green-40/10 px-1.5 py-0.5 text-[9.5px] text-green-40">
                     可控制
-                  </span>
-                )}
-              {!model.controlGranted &&
-                model.session.role === 'controller' &&
-                (model.phase === 'connecting' || model.phase === 'connected') && (
-                  <span className="rounded-full border border-neutral-60 px-1.5 py-0.5 text-[9.5px] text-neutral-80">
-                    仅查看
                   </span>
                 )}
             </div>
@@ -835,8 +678,7 @@ export default function RemoteDesktopDialog(props: {
           (model.phase === 'connecting' || model.phase === 'connected') && (
             <div className="rounded-control border border-neutral-50 bg-neutral-20 p-4 text-[12px] leading-relaxed text-neutral-80">
               <p className="m-0">
-                正在向 {model.session.peerName} 共享屏幕
-                {model.controlGranted ? '，并允许对方远程控制。' : '（仅查看，未授权控制）。'}
+                正在向 {model.session.peerName} 共享屏幕，鼠标键盘控制已同时开启。
               </p>
               <p className="mt-1 mb-0 text-[11px] text-neutral-70">
                 随时可以点击“停止远程桌面”结束共享。停止后对方会立即失去画面和控制。
@@ -886,9 +728,7 @@ export default function RemoteDesktopDialog(props: {
 
         {model.phase === 'connected' && model.session?.role === 'controller' && (
           <p className="m-0 text-[10.5px] leading-relaxed text-neutral-70">
-            {model.controlGranted
-              ? '点击画面后可使用鼠标和键盘；离开窗口会释放所有按键。'
-              : '当前仅查看画面，对方未授权远程控制。'}
+            点击画面后可使用鼠标和键盘；离开窗口会释放所有按键。
             {model.width > 0 && model.height > 0 ? ` 分辨率 ${model.width}×${model.height}。` : ''}
           </p>
         )}

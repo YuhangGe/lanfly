@@ -366,7 +366,7 @@ describe('双实例集成', () => {
     expect(result.text).toContain('--secret');
   });
 
-  it('远程桌面请求需要被控端确认，并拒绝伪造的设备身份', async () => {
+  it('远程桌面自动接受并始终开启控制，同时拒绝伪造的设备身份', async () => {
     await access(CLI).catch(() => {
       throw new Error('未找到 dist/cli.js，请先运行 pnpm build');
     });
@@ -379,53 +379,28 @@ describe('双实例集成', () => {
     });
     const requested = await rpc<DesktopSessionView>(a, 'desktopRequest', {
       peerId: target.id,
-      control: true,
     });
     expect(requested.error).toBeUndefined();
-    const incoming = await waitFor('B 收到授权请求', async () => {
+    expect(requested.data?.phase).toBe('accepted');
+    expect(requested.data?.control).toBe(true);
+    expect(requested.data?.controlRequested).toBe(true);
+
+    const receiving = await waitFor('B 自动接受会话', async () => {
       const current = await rpc<{ sessions: DesktopSessionView[] }>(b, 'desktopState');
       return current.data?.sessions.find(
         (session) => session.sessionId === requested.data?.sessionId,
       );
     });
-    expect(incoming.role).toBe('controlled');
-    expect(incoming.phase).toBe('pending');
-    expect(incoming.controlRequested).toBe(true);
-    expect(incoming.control).toBe(false);
+    expect(receiving.role).toBe('controlled');
+    expect(receiving.phase).toBe('accepted');
+    expect(receiving.control).toBe(true);
 
-    // A request alone must never start media or bypass the controlled-side confirmation.
-    const early = await rpc(a, 'desktopOffer', {
-      sessionId: incoming.sessionId,
-      sdp: 'v=0\r\no=- 0 0 IN IP4 0.0.0.0\r\ns=-\r\nt=0 0\r\n',
-    });
-    expect(early.error).toBe('DESKTOP_STATE');
-
-    const rejected = await rpc(b, 'desktopReject', { sessionId: incoming.sessionId });
-    expect(rejected.error).toBeUndefined();
-    await waitFor('B 清除被拒绝的会话', async () => {
-      const current = await rpc<{ sessions: DesktopSessionView[] }>(b, 'desktopState');
-      return current.data?.sessions.length === 0 ? true : undefined;
-    });
-
-    const canceled = await rpc<DesktopSessionView>(a, 'desktopRequest', {
-      peerId: target.id,
-      control: false,
-    });
-    expect(canceled.error).toBeUndefined();
-    await waitFor('B 再次收到授权请求', async () => {
-      const current = await rpc<{ sessions: DesktopSessionView[] }>(b, 'desktopState');
-      return current.data?.sessions.some(
-        (session) => session.sessionId === canceled.data?.sessionId,
-      )
-        ? true
-        : undefined;
-    });
     const stopped = await rpc(a, 'desktopStop', {
-      sessionId: canceled.data!.sessionId,
+      sessionId: requested.data!.sessionId,
       reason: 'CANCELED',
     });
     expect(stopped.error).toBeUndefined();
-    await waitFor('发起方取消后 B 清除请求', async () => {
+    await waitFor('发起方停止后 B 清除会话', async () => {
       const current = await rpc<{ sessions: DesktopSessionView[] }>(b, 'desktopState');
       return current.data?.sessions.length === 0 ? true : undefined;
     });
