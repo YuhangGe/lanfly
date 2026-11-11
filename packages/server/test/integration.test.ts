@@ -379,6 +379,7 @@ describe('双实例集成', () => {
     });
     const requested = await rpc<DesktopSessionView>(a, 'desktopRequest', {
       peerId: target.id,
+      bitrate: 32_000_000,
     });
     expect(requested.error).toBeUndefined();
     expect(requested.data?.phase).toBe('accepted');

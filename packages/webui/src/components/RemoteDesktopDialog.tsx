@@ -600,6 +600,8 @@ export default function RemoteDesktopDialog(props: {
                   <option value="2000000">流畅（2 Mbps）</option>
                   <option value="4000000">均衡（4 Mbps）</option>
                   <option value="8000000">清晰（8 Mbps）</option>
+                  <option value="16000000">超高清（16 Mbps）</option>
+                  <option value="32000000">超高清（32 Mbps）</option>
                 </select>
               </label>
             </div>

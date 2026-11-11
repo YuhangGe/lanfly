@@ -167,7 +167,10 @@ extern "C" void *lf_capture_start(uint32_t max_width,
             configuration.minimumFrameInterval = CMTimeMake(1, (int32_t)fps);
             configuration.pixelFormat = kCVPixelFormatType_32BGRA;
             configuration.queueDepth = 3;
-            configuration.showsCursor = YES;
+            // The controller renders its own local pointer over the video. Capturing the
+            // host cursor as well makes it lag behind the local pointer and look like a
+            // second animated cursor chasing it.
+            configuration.showsCursor = NO;
             configuration.scalesToFit = YES;
 
             LFCaptureOutput *output = [[LFCaptureOutput alloc] init];

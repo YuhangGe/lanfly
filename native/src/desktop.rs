@@ -405,7 +405,7 @@ impl Session {
     }
 
     fn set_bitrate(&self, bitrate: u32) -> Result<(), String> {
-        let bitrate = bitrate.clamp(256_000, 24_000_000);
+        let bitrate = bitrate.clamp(256_000, 32_000_000);
         self.bitrate.store(bitrate as u64, Ordering::Relaxed);
         if let Ok(encoder) = self.encoder.lock() {
             if let Some(encoder) = encoder.as_ref() {
@@ -666,7 +666,7 @@ pub fn start(session_id: &str, config_json: &str) -> Result<Value, String> {
     if !(160..=3840).contains(&config.max_width)
         || !(120..=2160).contains(&config.max_height)
         || !(1..=60).contains(&config.fps)
-        || !(128_000..=24_000_000).contains(&config.bitrate)
+        || !(128_000..=32_000_000).contains(&config.bitrate)
     {
         return Err("DESKTOP_INVALID_CONFIG".to_owned());
     }

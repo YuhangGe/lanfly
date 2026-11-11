@@ -120,9 +120,9 @@ npx lanfly --out ~/Downloads/lanfly
 4. 被控端**不需要点击接受**：请求会按现有 Room ID 和设备身份校验后自动接受。被控端本机 WebUI 会打开一个被动的共享状态窗口，显示是谁在查看，并提供“停止远程桌面”按钮。
 5. 控制端浏览器自动通过 `RTCPeerConnection` 接收 H.264 视频并绑定到 `HTMLVideoElement`，支持画面自适应和全屏。鼠标键盘控制会随远程桌面一起自动开启，不提供单独的仅查看模式。停止按钮会同时释放视频流、PeerConnection、数据通道和按键状态。
 
-实现链路：macOS `ScreenCaptureKit` 持续采集主显示器 → `VideoToolbox` 硬件 H.264（Constrained Baseline，默认 30 FPS、4 Mbps、最高 1080p）→ Rust `webrtc-rs` 发送 RTP。SDP 和 ICE 只通过 lanfly 现有 Node.js 信令与设备身份通道转发；编码帧不会进入 JavaScript。远程键鼠事件通过已授权的 WebRTC DataChannel（DTLS 加密）直接发送到被控 Mac，由现有 Rust + Quartz 注入，不经过 Node.js 转发。
+实现链路：macOS `ScreenCaptureKit` 持续采集主显示器（不把被控端指针编码进视频，控制端使用本地指针，避免视频指针滞后于本地鼠标形成双重光标）→ `VideoToolbox` 硬件 H.264（Constrained Baseline，默认 30 FPS、4 Mbps，可选 2/4/8/16/32 Mbps，最高 1080p）→ Rust `webrtc-rs` 发送 RTP。SDP 和 ICE 只通过 lanfly 现有 Node.js 信令与设备身份通道转发；编码帧不会进入 JavaScript。远程键鼠事件通过已授权的 WebRTC DataChannel（DTLS 加密）直接发送到被控 Mac，由现有 Rust + Quartz 注入，不经过 Node.js 转发。
 
-远程桌面会话使用唯一 `sessionId`，并绑定发起设备身份、目标设备和一次性令牌；SDP、ICE、停止和输入消息都会校验来源设备和令牌。远程桌面会自动开启键鼠控制，并在连接时停止现有键鼠共享，避免两套输入状态冲突。一次只允许一个远程桌面会话，只采集主显示器；不包含音频、剪贴板同步或文件跨屏拖拽。首版只使用局域网 host ICE candidate，不支持跨 NAT、VLAN 或公网。
+远程桌面会话使用唯一 `sessionId`，并绑定发起设备身份、目标设备和一次性令牌；SDP、ICE、停止和输入消息都会校验来源设备和令牌。远程桌面会自动开启键鼠控制，并在连接时停止现有键鼠共享，避免两套输入状态冲突。一次只允许一个远程桌面会话，只采集主显示器；不包含音频、剪贴板同步或文件跨屏拖拽。控制端指针形状暂不同步（例如文本光标、缩放光标），被控端本地移动鼠标时也不会实时显示在画面里的指针上。首版只使用局域网 host ICE candidate，不支持跨 NAT、VLAN 或公网。
 
 从源码开发时需要运行 `pnpm build:native` 重新编译包含桌面模块的原生文件；正式发布包需按 macOS 架构包含带桌面模块的预编译 `lanfly-input-darwin-*`。
 

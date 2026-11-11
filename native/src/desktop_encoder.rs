@@ -591,7 +591,7 @@ impl Encoder {
     }
 
     pub fn set_bitrate(&self, bitrate: u32) -> bool {
-        let bitrate = bitrate.clamp(256_000, 24_000_000);
+        let bitrate = bitrate.clamp(256_000, 32_000_000);
         self.shared.bitrate.store(bitrate as u64, Ordering::Relaxed);
         let session = *self.shared.session.lock().unwrap();
         if session.is_null() {
