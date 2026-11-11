@@ -145,6 +145,8 @@ export class DesktopControl {
   #frame = 0;
   #pending: Point | null = null;
   #attached = false;
+  #capsDown = false;
+  #keyboardLocked = false;
 
   constructor(
     private readonly stage: HTMLElement,
@@ -165,6 +167,15 @@ export class DesktopControl {
     this.#listen(this.stage, 'contextmenu', (event) => event.preventDefault());
     this.#listen(this.stage, 'keydown', (event) => this.#key(event as KeyboardEvent, true));
     this.#listen(this.stage, 'keyup', (event) => this.#key(event as KeyboardEvent, false));
+    // Caps Lock is also a macOS input-source shortcut. Capture it at window level so the
+    // browser gets a chance to suppress the local switch, and send a source toggle instead
+    // of forwarding the raw Caps Lock key to the controlled Mac.
+    this.#listen(window, 'keydown', (event) => this.#caps(event as KeyboardEvent, true), {
+      capture: true,
+    });
+    this.#listen(window, 'keyup', (event) => this.#caps(event as KeyboardEvent, false), {
+      capture: true,
+    });
     this.#listen(this.stage, 'blur', () => this.release());
     const visibility = () => {
       if (document.visibilityState === 'hidden') this.release();
@@ -178,6 +189,7 @@ export class DesktopControl {
 
   detach(): void {
     this.release();
+    this.#unlockKeyboard();
     if (this.#frame) cancelAnimationFrame(this.#frame);
     this.#frame = 0;
     this.#pending = null;
@@ -187,7 +199,48 @@ export class DesktopControl {
 
   release(): void {
     this.#buttons.clear();
+    this.#capsDown = false;
     this.#send({ t: 'release' });
+    this.#unlockKeyboard();
+  }
+
+  async lockKeyboard(): Promise<void> {
+    const keyboard = (
+      navigator as Navigator & {
+        keyboard?: { lock?: () => Promise<void>; unlock?: () => void };
+      }
+    ).keyboard;
+    if (!keyboard?.lock || this.#keyboardLocked) return;
+    try {
+      // Keyboard Lock lets the page receive browser-reserved shortcuts such as Cmd+N/T/W
+      // while the remote desktop view owns the keyboard.
+      await keyboard.lock();
+      this.#keyboardLocked = true;
+    } catch {
+      // Not available outside a supported user gesture/fullscreen context.
+    }
+  }
+
+  #unlockKeyboard(): void {
+    if (!this.#keyboardLocked) return;
+    this.#keyboardLocked = false;
+    (
+      navigator as Navigator & {
+        keyboard?: { unlock?: () => void };
+      }
+    ).keyboard?.unlock?.();
+  }
+
+  #caps(event: KeyboardEvent, down: boolean): void {
+    if (event.code !== 'CapsLock') return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (down && !this.#capsDown) {
+      this.#capsDown = true;
+      this.#send({ t: 'source' });
+    } else if (!down) {
+      this.#capsDown = false;
+    }
   }
 
   #listen(
@@ -226,6 +279,7 @@ export class DesktopControl {
 
   #pointerDown(event: PointerEvent): void {
     if (event.button > 2) return;
+    void this.lockKeyboard();
     this.stage.focus({ preventScroll: true });
     try {
       this.stage.setPointerCapture(event.pointerId);
@@ -298,6 +352,10 @@ export class DesktopControl {
   }
 
   #key(event: KeyboardEvent, down: boolean): void {
+    if (event.code === 'CapsLock') {
+      this.#caps(event, down);
+      return;
+    }
     const key = macKeyCode(event.code);
     if (key === undefined) return;
     event.preventDefault();

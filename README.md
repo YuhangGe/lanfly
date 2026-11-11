@@ -68,7 +68,7 @@ View and control another Mac's desktop. The controller can be another lanfly hos
 3. Select the device, choose a quality level if needed, and click **Start Remote Desktop**.
 4. The controlled side does not need to click "Accept" — the connection is established automatically. Its local WebUI opens a status window showing who is viewing, with a **Stop Remote Desktop** button.
 5. The controller can move the mouse, use the keyboard, and toggle fullscreen. Keyboard and mouse control is enabled together with remote desktop; no separate permission is needed.
-6. While connected, click **Minimize** to return to chat or file transfer. Click **Remote Desktop** in the current chat again to restore it. If A is already connected and you click Remote Desktop for B, lanfly first asks whether to end the session with A.
+6. While connected, either side can click **Minimize** to return to chat or file transfer. The controller restores it by clicking **Remote Desktop** in the current chat; the controlled side restores it from **Sharing screen** in the top bar. If A is already connected and you click Remote Desktop for B, lanfly first asks whether to end the session with A.
 
 ### Quality
 
@@ -82,6 +82,8 @@ View and control another Mac's desktop. The controller can be another lanfly hos
 - Without Screen Recording or Accessibility permission, remote desktop cannot display or control correctly. Grant the permissions first.
 - Only one remote desktop session is allowed at a time. Starting remote desktop stops any active Keyboard & Mouse Sharing session to avoid conflicting input.
 - Audio, clipboard sync, and cross-screen file dragging are not included.
+- Caps Lock is sent as an input-source switch to the controlled Mac. macOS may still switch the controller's own input source first.
+- Remote desktop tries to capture browser shortcuts such as Cmd+N/T/W with the Keyboard Lock API. In Safari/Firefox, or when the lock is unavailable, some browser shortcuts may still work.
 - The controller uses its own local pointer. Pointer shapes (text cursor, resize cursor, etc.) are not synchronized yet, and mouse movement made locally on the controlled Mac is not reflected in the controller's pointer.
 - LAN only; NAT, VLAN, VPN, and the public internet are not supported.
 

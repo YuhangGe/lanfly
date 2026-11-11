@@ -514,7 +514,10 @@ export default function RemoteDesktopDialog(props: {
   }
 
   function minimize() {
-    control?.release();
+    // Detach the global Caps Lock capture while the window is minimized so normal
+    // local keyboard handling (including chat) is restored.
+    control?.detach();
+    control = undefined;
     if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
     props.onMinimize();
   }
@@ -523,8 +526,12 @@ export default function RemoteDesktopDialog(props: {
     const element = stage.value;
     if (!element) return;
     try {
-      if (document.fullscreenElement) await document.exitFullscreen();
-      else await element.requestFullscreen();
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+      } else {
+        await element.requestFullscreen();
+        void control?.lockKeyboard();
+      }
     } catch {
       // Fullscreen may be denied by the browser; the inline stage still works.
     }
@@ -686,7 +693,7 @@ export default function RemoteDesktopDialog(props: {
                 )}
             </div>
             <div className="flex shrink-0 gap-1.5">
-              {model.phase === 'connected' && (
+              {model.phase === 'connected' && model.session?.role === 'controller' && (
                 <Button
                   size="compact"
                   variant="secondary"
@@ -699,24 +706,23 @@ export default function RemoteDesktopDialog(props: {
                   />
                 </Button>
               )}
-              {model.session?.role === 'controller' &&
-                (model.phase === 'waiting' ||
-                  model.phase === 'connecting' ||
-                  model.phase === 'connected' ||
-                  model.phase === 'error') && (
-                  <Button
-                    size="compact"
-                    variant="secondary"
-                    title={t('最小化远程桌面')}
-                    aria-label={t('最小化远程桌面')}
-                    on:click={minimize}
-                  >
-                    <span
-                      className="icon-[codicon--chrome-minimize] text-[13px]"
-                      aria-hidden="true"
-                    />
-                  </Button>
-                )}
+              {(model.phase === 'waiting' ||
+                model.phase === 'connecting' ||
+                model.phase === 'connected' ||
+                model.phase === 'error') && (
+                <Button
+                  size="compact"
+                  variant="secondary"
+                  title={t('最小化远程桌面')}
+                  aria-label={t('最小化远程桌面')}
+                  on:click={minimize}
+                >
+                  <span
+                    className="icon-[codicon--chrome-minimize] text-[13px]"
+                    aria-hidden="true"
+                  />
+                </Button>
+              )}
               {(model.phase === 'waiting' ||
                 model.phase === 'connecting' ||
                 model.phase === 'connected' ||

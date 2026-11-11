@@ -99,6 +99,7 @@ export default function App() {
     desktopMinimized: false,
     desktopPeerId: '',
     desktopSessionId: '',
+    desktopSharingId: '',
     desktopSwitch: null as {
       peerId: string;
       sessionId: string;
@@ -399,12 +400,23 @@ export default function App() {
       const payload = parseEvent<DesktopEvent>(event);
       if (!payload) return;
       emitDesktopEvent(payload);
+      if (
+        payload.type === 'ended' &&
+        model.desktopSharingId &&
+        payload.sessionId === model.desktopSharingId
+      ) {
+        model.desktopSharingId = '';
+        model.desktopOpen = false;
+        model.desktopMinimized = false;
+        model.desktopSessionId = '';
+      }
       if (payload.type === 'accepted' && payload.session.role === 'controlled' && !browserMode) {
         model.desktopPeerId = payload.session.peerId;
         model.desktopSessionId = payload.session.sessionId;
         model.inputOpen = false;
         model.desktopMinimized = false;
         model.desktopOpen = true;
+        model.desktopSharingId = payload.session.sessionId;
         pushToast(t('{name} 已开始查看并控制你的屏幕', { name: payload.session.peerName }), 'info');
       }
     });
@@ -413,6 +425,7 @@ export default function App() {
   function showDesktop(peerId: string) {
     model.desktopPeerId = peerId;
     model.desktopSessionId = '';
+    model.desktopSharingId = '';
     model.desktopMinimized = false;
     model.inputOpen = false;
     model.desktopOpen = true;
@@ -801,6 +814,25 @@ export default function App() {
           </div>
         )}
         <div className="ml-auto flex items-center gap-1.5">
+          {model.desktopSharingId && (
+            <Button
+              size="compact"
+              variant="ghost"
+              className="text-green-40"
+              title={t('屏幕共享中，点击打开')}
+              aria-label={t('屏幕共享中，点击打开')}
+              on:click={() => {
+                model.desktopMinimized = false;
+                model.desktopOpen = true;
+              }}
+            >
+              <span
+                className="icon-[codicon--screen-normal] text-[13px] sm:mr-1"
+                aria-hidden="true"
+              />
+              <span className="max-[760px]:hidden">{t('屏幕共享中')}</span>
+            </Button>
+          )}
           <LanguageSwitcher />
           <span
             className={`flex items-center gap-1.5 rounded-full border px-2 py-1 text-[10px] ${
@@ -1255,6 +1287,7 @@ export default function App() {
             model.desktopOpen = false;
             model.desktopMinimized = false;
             model.desktopSessionId = '';
+            model.desktopSharingId = '';
             model.desktopPeerId = '';
           }}
         />

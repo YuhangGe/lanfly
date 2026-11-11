@@ -40,6 +40,7 @@ export function registerErrors() {
     DESKTOP_CODEC_FAILED: t('没有协商出可用的 H.264 编码'),
     DESKTOP_SESSION_CLOSED: t('远程桌面会话已关闭'),
     DESKTOP_INPUT_INVALID: t('远程控制事件格式不正确'),
+    DESKTOP_INPUT_SOURCE_FAILED: t('无法切换受控端输入法'),
     DESKTOP_BITRATE_FAILED: t('无法调整码率'),
     DESKTOP_INVALID_CONFIG: t('远程桌面参数不正确'),
     DESKTOP_CAPTURE_TIMEOUT: t('屏幕采集启动超时'),

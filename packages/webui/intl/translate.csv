@@ -29,6 +29,7 @@ Mgn63M,src/App.tsx,已复制局域网地址,已复制局域网地址,已複製�
 O1Xp81,src/App.tsx,左侧列表中的设备与你运行着同一个 lanfly。选择后可以发送消息、拖拽文件，或直接粘贴截图。,左侧列表中的设备与你运行着同一个 lanfly。选择后可以发送消息、拖拽文件，或直接粘贴截图。,左側列表中的裝置與你執行著同一個 lanfly。選擇後可以傳送訊息、拖曳檔案，或直接貼上截圖。,"The devices in the left list run the same lanfly. Select one to send messages, drag files, or paste a screenshot."
 Oj85cC,src/App.tsx,发送文件,发送文件,傳送檔案,Send file
 P7QUlF,src/App.tsx,请先选择一台设备,请先选择一台设备,請先選擇一臺裝置,Select a device first
+PAFL75,src/App.tsx,屏幕共享中,屏幕共享中,螢幕分享中,Sharing screen
 Pr+Ah1,src/App.tsx,已作为独立设备接入,已作为独立设备接入,已作為獨立裝置接入,Connected as an independent device
 PwpMCK,src/App.tsx,尚未加载,尚未加载,尚未載入,Not loaded
 S/qcU+,src/App.tsx,已接收 {name},已接收 {name},已接收 {name},Received {name}
@@ -65,6 +66,7 @@ kuCzJl,src/App.tsx,松开鼠标发送文件,松开鼠标发送文件,鬆開滑�
 lVcBSJ,src/App.tsx,当前正在与,当前正在与,目前正在與,Currently connected to
 lfZ6LI,src/App.tsx,设备已重新连接,设备已重新连接,裝置已重新連線,Device reconnected
 llLRjA,src/App.tsx,目标设备,目标设备,目標裝置,Target device
+mtfb1D,src/App.tsx,屏幕共享中，点击打开,屏幕共享中，点击打开,螢幕分享中，點選開啟,Sharing screen — click to open
 n+N4na,src/App.tsx,文件 {name} 发送失败,文件 {name} 发送失败,檔案 {name} 傳送失敗,Failed to send {name}
 nE4JHJ,src/App.tsx,正在重连…,正在重连…,正在重連…,Reconnecting…
 oPnET6,src/App.tsx,发送给 {name}…,发送给 {name}…,傳送給 {name}…,Message {name}…
@@ -282,3 +284,4 @@ yEf5EG,src/service/errors.ts,本地服务出现异常，请查看终端日志,�
 yXTuwR,src/service/errors.ts,远程桌面已停止,远程桌面已停止,遠端桌面已停止,Remote desktop stopped.
 yaSxuq,src/service/errors.ts,原生桌面组件未安装，请重新安装包含桌面模块的 lanfly,原生桌面组件未安装，请重新安装包含桌面模块的 lanfly,原生桌面元件未安裝，請重新安裝包含桌面模組的 lanfly,The native desktop component is not installed. Reinstall lanfly with the desktop module.
 yuJnLv,src/service/errors.ts,无法采集屏幕，请检查屏幕录制权限和显示器状态,无法采集屏幕，请检查屏幕录制权限和显示器状态,無法採集螢幕，請檢查螢幕錄製權限和顯示器狀態,Unable to capture the screen. Check Screen Recording permission and display status.
+zM0484,src/service/errors.ts,无法切换受控端输入法,无法切换受控端输入法,無法切換受控端輸入法,Unable to switch the remote input source

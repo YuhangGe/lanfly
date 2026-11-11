@@ -283,6 +283,12 @@ pub fn handle(value: &str) -> Result<(), String> {
                 post(event);
             }
         }
+        "source" => {
+            drop(state);
+            if !crate::macos_input_source::toggle() {
+                return Err("DESKTOP_INPUT_SOURCE_FAILED".into());
+            }
+        }
         "release" => release_all(&mut state),
         _ => return Err("DESKTOP_INPUT_INVALID".into()),
     }
