@@ -13,12 +13,14 @@ import {
   type TransferView,
 } from '@lanfly/common';
 import http from 'node:http';
+import path from 'node:path';
 
 import type { ServerConfig } from './config';
 
 import { ErrorCodes, errorCode, throwActionError } from './core/errors';
 import { createHttpHandler } from './core/router';
 import { randomToken } from './core/security';
+import { DataStore } from './data';
 import { DesktopService } from './desktop/service';
 import { MulticastDiscovery } from './discovery/multicast';
 import { InputService } from './input/service';
@@ -48,6 +50,7 @@ export class Application {
   readonly input: InputService;
   readonly network: BrowserNetwork;
   readonly desktop: DesktopService;
+  readonly state: DataStore;
 
   #server: http.Server | undefined;
   #discovery: MulticastDiscovery | undefined;
@@ -63,6 +66,7 @@ export class Application {
     this.transfers = new TransferStore(this.events);
     this.remote = new RemoteClient(this.identity, this.identity.room);
     this.input = new InputService(this.identity.name, this.events, { roomId: config.roomId });
+    this.state = new DataStore(path.dirname(this.input.store.file));
     this.network = new BrowserNetwork(this);
     this.desktop = new DesktopService(this);
     this.events.peersProvider = () => this.network.peers();
@@ -71,6 +75,16 @@ export class Application {
 
   async start(): Promise<number> {
     await this.input.initialize();
+    try {
+      await this.state.load();
+    } catch (error) {
+      logger.debug(`无法读取启动状态：${String(error)}`);
+    }
+    const rememberFastClient = () => {
+      void this.state.set('startupFastClient', Date.now()).catch(() => undefined);
+    };
+    this.events.onFastClient = rememberFastClient;
+    this.network.onFastClient = rememberFastClient;
     try {
       await ensureDir(this.identity.downloadsDir);
     } catch (error) {
@@ -116,6 +130,28 @@ export class Application {
 
     logger.info(`lanfly 已启动：${this.identity.name}，${this.identity.roomId}，端口 ${port}`);
     return port;
+  }
+
+  /**
+   * Give pages from a previous run up to five seconds to reconnect, then ask every connected
+   * local and browser page to reload. The caller uses `local` to decide whether opening a new
+   * browser window is necessary.
+   */
+  async waitForStartupClients(
+    timeoutMs?: number,
+  ): Promise<{ local: boolean; localPages: number; browserPages: number }> {
+    const fast = typeof this.state.get('startupFastClient') === 'number';
+    const wait = timeoutMs ?? (fast ? 1_200 : 3_200);
+    const deadline = Date.now() + wait;
+    let localSeen = false;
+    while (Date.now() < deadline) {
+      if (this.events.connections > 0) localSeen = true;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    const localPages = this.events.connections;
+    const browserPages = this.network.reloadBrowsers();
+    this.events.broadcast('reload', { at: Date.now() });
+    return { local: localSeen || localPages > 0, localPages, browserPages };
   }
 
   async stop(): Promise<void> {

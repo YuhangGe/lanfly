@@ -1,6 +1,6 @@
 {
   "name": "lanfly",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "A lightweight LAN messenger and file-transfer tool with automatic peer discovery.",
   "keywords": [
     "chat",

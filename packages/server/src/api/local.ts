@@ -28,7 +28,8 @@ export async function handleLocalRequest(
       sendError(response, 405, 'METHOD_NOT_ALLOWED');
       return;
     }
-    app.events.add(response);
+    const fast = new URL(request.url ?? '/', 'http://localhost').searchParams.get('client') === '2';
+    app.events.add(response, fast);
     return;
   }
 

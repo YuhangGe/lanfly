@@ -396,6 +396,19 @@ describe('双实例集成', () => {
     expect(receiving.phase).toBe('accepted');
     expect(receiving.control).toBe(true);
 
+    const preferences = await rpc<{ bitrates: Record<string, number> }>(a, 'desktopState');
+    expect(preferences.data?.bitrates[target.name]).toBe(32_000_000);
+    await waitFor('清晰度写入 data.json', async () => {
+      try {
+        const saved = JSON.parse(
+          await readFile(path.join(a.out, 'config', 'data.json'), 'utf8'),
+        ) as { desktopBitrates?: Record<string, number> };
+        return saved.desktopBitrates?.[target.name] === 32_000_000 ? true : undefined;
+      } catch {
+        return undefined;
+      }
+    });
+
     const stopped = await rpc(a, 'desktopStop', {
       sessionId: requested.data!.sessionId,
       reason: 'CANCELED',

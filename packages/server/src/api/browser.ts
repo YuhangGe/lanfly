@@ -55,7 +55,9 @@ export async function handleBrowserRequest(
     }
     const id = app.network.authenticate(request);
     if (route === 'events' && request.method === 'GET') {
-      app.network.attach(id, response);
+      const fast =
+        new URL(request.url ?? '/', 'http://localhost').searchParams.get('client') === '2';
+      app.network.attach(id, response, fast);
       return;
     }
     if (route.startsWith('download/') && request.method === 'GET') {

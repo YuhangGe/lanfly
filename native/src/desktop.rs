@@ -61,8 +61,8 @@ struct StartConfig {
 impl Default for StartConfig {
     fn default() -> Self {
         Self {
-            max_width: 1920,
-            max_height: 1080,
+            max_width: 3840,
+            max_height: 2160,
             fps: 30,
             bitrate: 4_000_000,
             local_address: None,
@@ -275,7 +275,12 @@ impl Session {
                 .map_err(|error| format!("DESKTOP_ANSWER_FAILED: {error}"))?;
             // Advertise the level emitted by VideoToolbox to the remote peer. The local
             // description keeps the negotiated default; level asymmetry is permitted by RFC 6184.
-            answer.sdp = advertise_h264_level(&answer.sdp);
+            answer.sdp = advertise_h264_level(
+                &answer.sdp,
+                self.width,
+                self.height,
+                self.bitrate.load(Ordering::Relaxed) as u32,
+            );
             Ok::<_, String>(answer)
         })?;
         let parameters = self
@@ -498,11 +503,21 @@ fn local_socket_address(value: Option<&str>) -> String {
     }
 }
 
-/// The browser offer advertises H.264 Level 3.1 (1280x720), while VideoToolbox emits
-/// Level 4.0 for a 1080p-class stream. The answer is allowed to choose its own level;
-/// rewrite the fmtp so Chrome configures the decoder for the stream actually being sent.
-fn advertise_h264_level(sdp: &str) -> String {
+/// The browser offer usually advertises a low H.264 level, but the actual stream can be a
+/// 2940x1912 Retina capture at up to 32 Mbps. Rewrite the fmtp level so Chrome configures its
+/// decoder for the real frame size and bitrate instead of rejecting or downscaling the stream.
+fn advertise_h264_level(sdp: &str, width: u32, height: u32, bitrate: u32) -> String {
     const KEY: &str = "profile-level-id=";
+    let macroblocks = width.div_ceil(16) * height.div_ceil(16);
+    let level = if macroblocks <= 8_192 && bitrate <= 14_000_000 {
+        "42e028" // Level 4.0
+    } else if macroblocks <= 8_704 && bitrate <= 20_000_000 {
+        "42e02a" // Level 4.2
+    } else if macroblocks <= 22_080 && bitrate <= 50_000_000 {
+        "42e032" // Level 5.0
+    } else {
+        "42e033" // Level 5.1
+    };
     let mut output = String::with_capacity(sdp.len());
     let mut rest = sdp;
     while let Some(position) = rest.find(KEY) {
@@ -510,7 +525,7 @@ fn advertise_h264_level(sdp: &str) -> String {
         output.push_str(&rest[..end]);
         let value = &rest[end..];
         if value.len() >= 6 && value[..6].chars().all(|ch| ch.is_ascii_hexdigit()) {
-            output.push_str("42e028");
+            output.push_str(level);
             rest = &value[6..];
         } else {
             rest = value;
@@ -866,8 +881,16 @@ mod tests {
     #[test]
     fn answer_advertises_the_level_videotoolbox_emits() {
         let sdp = "a=fmtp:108 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f\r\n";
-        assert!(advertise_h264_level(sdp).contains("profile-level-id=42e028"));
-        assert!(advertise_h264_level("no fmtp here").eq("no fmtp here"));
+        assert!(advertise_h264_level(sdp, 1920, 1080, 4_000_000).contains("profile-level-id=42e028"));
+        assert!(
+            advertise_h264_level(sdp, 2940, 1912, 16_000_000)
+                .contains("profile-level-id=42e032")
+        );
+        assert!(
+            advertise_h264_level(sdp, 3840, 2160, 32_000_000)
+                .contains("profile-level-id=42e033")
+        );
+        assert!(advertise_h264_level("no fmtp here", 1920, 1080, 4_000_000).eq("no fmtp here"));
     }
 
     #[test]

@@ -1,7 +1,7 @@
 import { stringify } from 'superjson';
 
 export const browserMode = !['127.0.0.1', 'localhost', '[::1]', '::1'].includes(location.hostname);
-export const eventPath = browserMode ? '/api/v1/browser/events' : '/events';
+export const eventPath = `${browserMode ? '/api/v1/browser/events' : '/events'}?client=2`;
 
 function stored(key: string): string {
   try {

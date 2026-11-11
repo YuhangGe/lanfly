@@ -335,6 +335,9 @@ export default function App() {
       model.connected = false;
       if (browserMode && !model.joinBusy) void startBrowser();
     };
+    source.addEventListener('reload', () => {
+      window.location.reload();
+    });
     source.addEventListener('peers', (event) => {
       const peers = parseEvent<PeerView[]>(event);
       if (peers) applyPeers(peers);

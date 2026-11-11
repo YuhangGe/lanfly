@@ -77,6 +77,7 @@ type OutgoingFile = {
 
 /** Browser leaves only travel across a direct native peer connection; remote rosters are never re-advertised. */
 export class BrowserNetwork {
+  onFastClient?: () => void;
   readonly browsers = new Map<string, Browser>();
   readonly remoteBrowsers = new Map<string, { at: number; peers: BrowserAnnouncement[] }>();
   readonly incoming = new Map<string, IncomingFile>();
@@ -179,10 +180,11 @@ export class BrowserNetwork {
     return id;
   }
 
-  attach(id: string, response: ServerResponse): void {
+  attach(id: string, response: ServerResponse, fast = false): void {
     const browser = this.browsers.get(id)!;
     browser.connections++;
-    browser.events.add(response);
+    browser.events.add(response, fast);
+    if (fast) this.onFastClient?.();
     this.publishPeers();
     response.once('close', () => {
       browser.connections = Math.max(0, browser.connections - 1);
@@ -257,6 +259,17 @@ export class BrowserNetwork {
       },
       ...this.peers(),
     ].filter((p) => p.id !== id);
+  }
+
+  /** Notify every directly connected browser device to reload its UI. */
+  reloadBrowsers(): number {
+    let pages = 0;
+    const payload = { at: Date.now() };
+    for (const browser of this.browsers.values()) {
+      pages += browser.events.connections;
+      browser.events.broadcast('reload', payload);
+    }
+    return pages;
   }
 
   publishPeers(): void {

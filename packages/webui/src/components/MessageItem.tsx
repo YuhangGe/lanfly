@@ -88,7 +88,7 @@ export default function MessageItem(props: {
           className={`min-w-0 rounded-[11px] px-3 py-2 text-[13px] leading-[1.55] shadow-bubble ${
             props.message.direction === 'out'
               ? 'rounded-tr-[4px] bg-blue-30 text-white'
-              : 'rounded-tl-[4px] border border-neutral-40 bg-neutral-30 text-neutral-100'
+              : 'rounded-tl-[4px] border border-neutral-60 bg-neutral-50 text-neutral-110'
           }`}
         >
           {props.message.kind === 'text' ? (
@@ -99,7 +99,7 @@ export default function MessageItem(props: {
                 className={`grid size-9 shrink-0 place-items-center rounded-[8px] ${
                   props.message.direction === 'out'
                     ? 'bg-white/15 text-white'
-                    : 'bg-neutral-40 text-blue-40'
+                    : 'bg-neutral-60 text-blue-40'
                 }`}
               >
                 <span
@@ -115,7 +115,7 @@ export default function MessageItem(props: {
                   {props.message.file?.name}
                 </div>
                 <div
-                  className={`mt-0.5 text-[10.5px] ${props.message.direction === 'out' ? 'text-white/70' : 'text-neutral-80'}`}
+                  className={`mt-0.5 text-[10.5px] ${props.message.direction === 'out' ? 'text-white/70' : 'text-neutral-90'}`}
                 >
                   {formatBytes(props.message.file?.size ?? 0)} ·{' '}
                   {transferLabel(props.message.transfer)}
@@ -138,7 +138,7 @@ export default function MessageItem(props: {
                   ) && (
                     <div className="mt-1.5">
                       <div
-                        className={`h-1 overflow-hidden rounded-full ${props.message.direction === 'out' ? 'bg-black/25' : 'bg-neutral-50'}`}
+                        className={`h-1 overflow-hidden rounded-full ${props.message.direction === 'out' ? 'bg-black/25' : 'bg-neutral-60'}`}
                       >
                         <div
                           className={`h-full rounded-full transition-[width] duration-150 ${props.message.direction === 'out' ? 'bg-white/85' : 'bg-blue-40'}`}
@@ -146,7 +146,7 @@ export default function MessageItem(props: {
                         />
                       </div>
                       <div
-                        className={`mt-1 flex items-center justify-between text-[10px] ${props.message.direction === 'out' ? 'text-white/65' : 'text-neutral-80'}`}
+                        className={`mt-1 flex items-center justify-between text-[10px] ${props.message.direction === 'out' ? 'text-white/65' : 'text-neutral-90'}`}
                       >
                         <span>
                           {formatBytes(props.message.transfer?.bytes ?? 0)} /{' '}
@@ -178,7 +178,7 @@ export default function MessageItem(props: {
               {isActive(props.message.transfer) && props.message.transfer?.id && (
                 <Button
                   size="icon"
-                  className={`shrink-0 ${props.message.direction === 'out' ? 'text-white/70 hover:bg-white/15 hover:text-white' : 'text-neutral-80 hover:bg-white/5 hover:text-neutral-110'}`}
+                  className={`shrink-0 ${props.message.direction === 'out' ? 'text-white/70 hover:bg-white/15 hover:text-white' : 'text-neutral-90 hover:bg-white/10 hover:text-neutral-120'}`}
                   title="取消传输"
                   aria-label={`取消传输 ${props.message.transfer.file.name}`}
                   on:click={() => props.onCancel(props.message.transfer?.id ?? '')}

@@ -10,6 +10,7 @@ type SseClient = {
 export class EventHub {
   peersProvider?: () => unknown;
   onPeersChanged?: () => void;
+  onFastClient?: () => void;
   #clients = new Set<SseClient>();
   #nextId = 1;
   #heartbeat: NodeJS.Timeout;
@@ -27,14 +28,16 @@ export class EventHub {
     return this.#clients.size;
   }
 
-  add(response: ServerResponse): void {
+  add(response: ServerResponse, fast = false): void {
     response.writeHead(200, {
       'content-type': 'text/event-stream; charset=utf-8',
       'cache-control': 'no-cache, no-transform',
       connection: 'keep-alive',
       'x-accel-buffering': 'no',
     });
-    response.write('retry: 3000\n\n');
+    // Localhost reconnects are cheap. A short retry lets a restarted server find open pages in
+    // well under a second instead of waiting for the browser's default multi-second backoff.
+    response.write('retry: 300\n\n');
     const client: SseClient = { response, closed: false };
     this.#clients.add(client);
     const remove = () => {
@@ -44,6 +47,7 @@ export class EventHub {
     };
     response.on('close', remove);
     response.on('error', remove);
+    if (fast) this.onFastClient?.();
   }
 
   broadcast(event: string, data: unknown): void {
@@ -69,6 +73,12 @@ export class EventHub {
     clearInterval(this.#heartbeat);
     for (const client of this.#clients) {
       client.closed = true;
+      try {
+        // Let an existing page reconnect quickly if the process is started again.
+        client.response.write('retry: 300\n\n');
+      } catch {
+        // already gone
+      }
       client.response.end();
     }
     this.#clients.clear();

@@ -29,6 +29,7 @@ import Dialog from './Dialog';
 type UiPhase = 'idle' | 'waiting' | 'connecting' | 'connected' | 'ended' | 'error';
 
 const ICE_SERVERS: RTCIceServer[] = [];
+const BITRATE_OPTIONS = [2_000_000, 4_000_000, 8_000_000, 16_000_000, 32_000_000];
 
 function errorText(error: ActionResultError | null | undefined): string {
   return error ? new ActionError(error).message : '';
@@ -93,6 +94,7 @@ export default function RemoteDesktopDialog(props: {
     peerId: '',
     controlGranted: true,
     bitrate: DESKTOP_DEFAULT_BITRATE,
+    bitrates: {} as Record<string, number>,
     videoReady: false,
     fullscreen: false,
     controlReady: false,
@@ -121,6 +123,16 @@ export default function RemoteDesktopDialog(props: {
     return props.peers.filter((peer) => peer.kind !== 'browser' && peer.id !== props.gatewayId);
   }
 
+  function preferredBitrate(peerId: string): number {
+    const peer = props.peers.find((candidate) => candidate.id === peerId);
+    const saved = peer ? model.bitrates[peer.name] : undefined;
+    return saved !== undefined && BITRATE_OPTIONS.includes(saved) ? saved : DESKTOP_DEFAULT_BITRATE;
+  }
+
+  function selectPreferredBitrate(peerId: string) {
+    model.bitrate = preferredBitrate(peerId);
+  }
+
   function setInitialPeer() {
     if (props.gatewayId && model.peerId === props.gatewayId) model.peerId = '';
     if (model.peerId) return;
@@ -130,6 +142,7 @@ export default function RemoteDesktopDialog(props: {
     );
     if (active) model.peerId = active.id;
     else model.peerId = nativePeers().find((peer) => peer.online)?.id ?? '';
+    selectPreferredBitrate(model.peerId);
   }
 
   function applySession(session: DesktopSessionView) {
@@ -142,6 +155,7 @@ export default function RemoteDesktopDialog(props: {
     model.error = session.error ?? '';
     if (session.role === 'controller') {
       model.peerId = session.peerId;
+      selectPreferredBitrate(session.peerId);
       if (session.phase === 'accepted') {
         model.phase = 'connecting';
         if (!session.error) void connect(session);
@@ -159,6 +173,7 @@ export default function RemoteDesktopDialog(props: {
       model.error = errorText(error);
       return;
     }
+    model.bitrates = result?.bitrates ?? {};
     const sessions = result?.sessions ?? [];
     const initial = props.initialSessionId
       ? sessions.find((session) => session.sessionId === props.initialSessionId)
@@ -225,6 +240,7 @@ export default function RemoteDesktopDialog(props: {
       }
       model.session = session;
       model.mode = 'controller';
+      if (session.peerName) model.bitrates[session.peerName] = model.bitrate;
       model.controlGranted = true;
       model.error = session.error ? new ActionError({ code: session.error }).message : '';
       model.phase = session.error ? 'error' : statusFromPhase(session.phase);
@@ -548,7 +564,6 @@ export default function RemoteDesktopDialog(props: {
         if (!model.busy) void refreshStatus();
       }, 2500);
     }
-    setInitialPeer();
     return () => {
       mounted = false;
       unsubscribe?.();
@@ -577,6 +592,7 @@ export default function RemoteDesktopDialog(props: {
                   className="rounded-control border border-neutral-60 bg-neutral-40 px-2.5 py-2 text-[12px] text-neutral-110 outline-none focus:border-blue-40"
                   on:change={(event) => {
                     model.peerId = (event.target as HTMLSelectElement).value;
+                    selectPreferredBitrate(model.peerId);
                   }}
                 >
                   <option value="">请选择一台设备</option>

@@ -3,8 +3,8 @@ import { z } from 'zod';
 import { peerInfoSchema } from './schemas';
 
 /** Desktop capture defaults. Frames are H.264 at 30 fps and capped at 1080p. */
-export const DESKTOP_MAX_WIDTH = 1920;
-export const DESKTOP_MAX_HEIGHT = 1080;
+export const DESKTOP_MAX_WIDTH = 3840;
+export const DESKTOP_MAX_HEIGHT = 2160;
 export const DESKTOP_FPS = 30;
 export const DESKTOP_DEFAULT_BITRATE = 4_000_000;
 export const DESKTOP_MIN_BITRATE = 500_000;

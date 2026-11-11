@@ -43,6 +43,10 @@ unsafe extern "C" {
     fn CGDisplayBounds(display: u32) -> Rect;
     fn CGDisplayPixelsWide(display: u32) -> usize;
     fn CGDisplayPixelsHigh(display: u32) -> usize;
+    fn CGDisplayCopyDisplayMode(display: u32) -> *mut c_void;
+    fn CGDisplayModeGetPixelWidth(mode: *mut c_void) -> usize;
+    fn CGDisplayModeGetPixelHeight(mode: *mut c_void) -> usize;
+    fn CGDisplayModeRelease(mode: *mut c_void);
     fn CGDisplayHideCursor(display: u32) -> i32;
     fn CGDisplayShowCursor(display: u32) -> i32;
     fn CGWarpMouseCursorPosition(point: Point) -> i32;
@@ -305,10 +309,21 @@ pub(crate) fn display_bounds_tuple(id: u32) -> (f64, f64, f64, f64) {
 }
 
 pub(crate) fn display_pixels(id: u32) -> (u32, u32) {
-    (
-        unsafe { CGDisplayPixelsWide(id) } as u32,
-        unsafe { CGDisplayPixelsHigh(id) } as u32,
-    )
+    // CGDisplayPixelsWide returns the logical mode width (1470 on a 2940-wide Retina panel).
+    // The display mode's pixel width is the actual backing store that ScreenCaptureKit should
+    // capture.
+    unsafe {
+        let mode = CGDisplayCopyDisplayMode(id);
+        if !mode.is_null() {
+            let width = CGDisplayModeGetPixelWidth(mode);
+            let height = CGDisplayModeGetPixelHeight(mode);
+            CGDisplayModeRelease(mode);
+            if width >= 2 && height >= 2 {
+                return (width as u32, height as u32);
+            }
+        }
+        (CGDisplayPixelsWide(id) as u32, CGDisplayPixelsHigh(id) as u32)
+    }
 }
 
 pub fn status() -> Value {

@@ -3,8 +3,10 @@ import {
   DESKTOP_DEFAULT_BITRATE,
   DESKTOP_EVENT,
   DESKTOP_FPS,
+  DESKTOP_MAX_BITRATE,
   DESKTOP_MAX_HEIGHT,
   DESKTOP_MAX_WIDTH,
+  DESKTOP_MIN_BITRATE,
   DESKTOP_REQUEST_TTL_MS,
   type DesktopEvent,
   type DesktopIceCandidate,
@@ -54,6 +56,8 @@ interface Session {
   nativeStarted: boolean;
   error?: string;
 }
+
+const BITRATES_KEY = 'desktopBitrates';
 
 const ACTIVE_PHASES = new Set<DesktopPhase>([
   'pending',
@@ -132,6 +136,37 @@ export class DesktopService {
     return Boolean(this.#activeSession());
   }
 
+  /** The quality choice is remembered per target display name, not by ephemeral peer ID. */
+  bitrates(): Record<string, number> {
+    const stored = this.app.state.get(BITRATES_KEY);
+    if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return {};
+    const result: Record<string, number> = {};
+    for (const [name, value] of Object.entries(stored)) {
+      if (
+        typeof value === 'number' &&
+        Number.isInteger(value) &&
+        value >= DESKTOP_MIN_BITRATE &&
+        value <= DESKTOP_MAX_BITRATE
+      ) {
+        result[name] = value;
+      }
+    }
+    return result;
+  }
+
+  bitrateFor(name: string): number {
+    return this.bitrates()[name] ?? DESKTOP_DEFAULT_BITRATE;
+  }
+
+  #rememberBitrate(name: string, bitrate: number): void {
+    const bitrates = this.bitrates();
+    if (bitrates[name] === bitrate) return;
+    bitrates[name] = bitrate;
+    void this.app.state.set(BITRATES_KEY, bitrates).catch((error) => {
+      logger.debug(`保存远程桌面清晰度失败：${String(error)}`);
+    });
+  }
+
   async request(owner: string, input: DesktopRequestInput): Promise<DesktopSessionView> {
     if (this.#activeSession()) throwActionError(ErrorCodes.DESKTOP_BUSY);
     const target = this.app.network.peers().find((peer) => peer.id === input.peerId);
@@ -154,12 +189,13 @@ export class DesktopService {
       phase: 'pending',
       width: 0,
       height: 0,
-      bitrate: input.bitrate ?? DESKTOP_DEFAULT_BITRATE,
+      bitrate: input.bitrate ?? this.bitrateFor(target.name),
       createdAt: now,
       expiresAt: now + DESKTOP_REQUEST_TTL_MS,
       nativeStarted: false,
     };
     this.#sessions.set(session.id, session);
+    this.#rememberBitrate(target.name, session.bitrate);
     try {
       const accepted = await this.app.remote.desktopRequest(this.#target(session), {
         sessionId: session.id,
@@ -320,8 +356,9 @@ export class DesktopService {
     this.#finish(session, 'stopped', reason, true);
   }
 
-  state(owner: string): { sessions: DesktopSessionView[] } {
+  state(owner: string): { sessions: DesktopSessionView[]; bitrates: Record<string, number> } {
     return {
+      bitrates: this.bitrates(),
       sessions: [...this.#sessions.values()]
         .filter(
           (session) =>

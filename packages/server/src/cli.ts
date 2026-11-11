@@ -170,7 +170,19 @@ async function main(): Promise<void> {
   console.log(`  \x1b[90m按 Ctrl+C 停止；关闭终端后本次聊天记录会丢失。\x1b[0m`);
   console.log('');
 
-  if (!options.noOpen) setTimeout(() => openBrowser(self.url), 250);
+  const shouldOpenBrowser = !options.noOpen && process.env.LANFLY_NO_OPEN !== '1';
+  void app.waitForStartupClients().then(({ local, localPages, browserPages }) => {
+    const pages = localPages + browserPages;
+    if (pages > 0) console.log(`  已通知 ${pages} 个已连接页面刷新`);
+    if (local) {
+      console.log('  检测到已打开的本地页面，跳过自动打开浏览器');
+      return;
+    }
+    if (shouldOpenBrowser) {
+      console.log('  未检测到已有页面，正在打开浏览器');
+      openBrowser(self.url);
+    }
+  });
 
   let stopping = false;
   const shutdown = () => {

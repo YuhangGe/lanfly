@@ -148,8 +148,21 @@ extern "C" void *lf_capture_start(uint32_t max_width,
                 }
             }
             if (!display) display = content.displays.firstObject;
-            const uint32_t pixelWidth = (uint32_t)display.width;
-            const uint32_t pixelHeight = (uint32_t)display.height;
+            // SCDisplay.width/height are point dimensions. Capture the Retina backing pixels
+            // instead, otherwise a 1470x956 logical display is captured as 1470x956 and then
+            // upscaled by the browser to 2940x1912 physical pixels, which looks soft.
+            size_t pixelWidth = (size_t)display.width;
+            size_t pixelHeight = (size_t)display.height;
+            CGDisplayModeRef mode = CGDisplayCopyDisplayMode(display.displayID);
+            if (mode) {
+                const size_t modeWidth = CGDisplayModeGetPixelWidth(mode);
+                const size_t modeHeight = CGDisplayModeGetPixelHeight(mode);
+                if (modeWidth >= 2 && modeHeight >= 2) {
+                    pixelWidth = modeWidth;
+                    pixelHeight = modeHeight;
+                }
+                CGDisplayModeRelease(mode);
+            }
             if (pixelWidth < 2 || pixelHeight < 2) {
                 lf_set_error(error_buffer, error_length, @"DESKTOP_NO_DISPLAY");
                 return NULL;
