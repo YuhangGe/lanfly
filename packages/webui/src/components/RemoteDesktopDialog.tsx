@@ -25,6 +25,7 @@ import { onDesktopEvent } from '../service/desktop';
 import { DesktopControl } from '../service/desktop-input';
 import Button from './Button';
 import Dialog from './Dialog';
+import { onChanges } from './reactivity';
 
 type UiPhase = 'idle' | 'waiting' | 'connecting' | 'connected' | 'ended' | 'error';
 
@@ -81,6 +82,8 @@ export default function RemoteDesktopDialog(props: {
   gatewayId?: string;
   localAddressHint?: string;
   initialSessionId?: string;
+  minimized: boolean;
+  onMinimize: () => void;
   onClose: () => void;
 }) {
   const model = vm({
@@ -508,6 +511,12 @@ export default function RemoteDesktopDialog(props: {
     props.onClose();
   }
 
+  function minimize() {
+    control?.release();
+    if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
+    props.onMinimize();
+  }
+
   async function toggleFullscreen() {
     const element = stage.value;
     if (!element) return;
@@ -575,8 +584,20 @@ export default function RemoteDesktopDialog(props: {
     };
   });
 
+  onChanges(() => {
+    if (!props.minimized && video.value?.srcObject) {
+      void video.value.play().catch(() => undefined);
+    }
+  }, [[props, ['minimized']]]);
+
   return (
-    <Dialog title="远程桌面" size="screen" onClose={() => void close()} canClose={!model.busy}>
+    <Dialog
+      title="远程桌面"
+      size="screen"
+      open={!props.minimized}
+      onClose={() => void close()}
+      canClose={!model.busy}
+    >
       <div className="flex flex-col gap-3 text-[12px] text-neutral-90">
         {!model.session && (
           <div className="rounded-control border border-neutral-50 bg-neutral-20 p-3">
@@ -675,6 +696,24 @@ export default function RemoteDesktopDialog(props: {
                   />
                 </Button>
               )}
+              {model.session?.role === 'controller' &&
+                (model.phase === 'waiting' ||
+                  model.phase === 'connecting' ||
+                  model.phase === 'connected' ||
+                  model.phase === 'error') && (
+                  <Button
+                    size="compact"
+                    variant="secondary"
+                    title="最小化远程桌面"
+                    aria-label="最小化远程桌面"
+                    on:click={minimize}
+                  >
+                    <span
+                      className="icon-[codicon--chrome-minimize] text-[13px]"
+                      aria-hidden="true"
+                    />
+                  </Button>
+                )}
               {(model.phase === 'waiting' ||
                 model.phase === 'connecting' ||
                 model.phase === 'connected' ||

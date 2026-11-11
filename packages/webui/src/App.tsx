@@ -15,6 +15,7 @@ import {
   cancelTransfer,
   connectPeer,
   desktopState,
+  desktopStop,
   forgetPeer,
   openDownloads,
   retryMessage,
@@ -28,7 +29,7 @@ import type { Toast, UiMessage } from './types';
 import AddPeerDialog from './components/AddPeerDialog';
 import Avatar from './components/Avatar';
 import Button from './components/Button';
-import Dialog from './components/Dialog';
+import Dialog, { DialogActions } from './components/Dialog';
 import InputSharingDialog from './components/InputSharingDialog';
 import MessageItem from './components/MessageItem';
 import PeerList from './components/PeerList';
@@ -94,8 +95,15 @@ export default function App() {
     addOpen: false,
     inputOpen: false,
     desktopOpen: false,
+    desktopMinimized: false,
     desktopPeerId: '',
     desktopSessionId: '',
+    desktopSwitch: null as {
+      peerId: string;
+      sessionId: string;
+      currentName: string;
+      nextName: string;
+    } | null,
     addAddress: '',
     addBusy: false,
     addError: '',
@@ -385,17 +393,63 @@ export default function App() {
         model.desktopPeerId = payload.session.peerId;
         model.desktopSessionId = payload.session.sessionId;
         model.inputOpen = false;
+        model.desktopMinimized = false;
         model.desktopOpen = true;
         pushToast(`${payload.session.peerName} 已开始查看并控制你的屏幕`, 'info');
       }
     });
   }
 
-  function openDesktop(peerId = model.activePeerId) {
+  function showDesktop(peerId: string) {
     model.desktopPeerId = peerId;
     model.desktopSessionId = '';
+    model.desktopMinimized = false;
     model.inputOpen = false;
     model.desktopOpen = true;
+  }
+
+  async function openDesktop(peerId = model.activePeerId) {
+    if (!peerId) return;
+    if (model.desktopOpen && model.desktopPeerId === peerId) {
+      model.desktopMinimized = false;
+      return;
+    }
+    if (model.desktopPeerId && model.desktopPeerId !== peerId) {
+      const [error, result] = await desktopState({ toastError: false });
+      const active = result?.sessions.find(
+        (session) =>
+          session.phase === 'pending' ||
+          session.phase === 'accepted' ||
+          session.phase === 'connecting' ||
+          session.phase === 'connected' ||
+          session.phase === 'disconnected',
+      );
+      if (!error && active) {
+        model.desktopSwitch = {
+          peerId,
+          sessionId: active.sessionId,
+          currentName: active.peerName,
+          nextName: model.peers.find((peer) => peer.id === peerId)?.name ?? '目标设备',
+        };
+        return;
+      }
+    }
+    model.desktopOpen = false;
+    await nextTick();
+    showDesktop(peerId);
+  }
+
+  async function confirmDesktopSwitch() {
+    const pending = model.desktopSwitch;
+    if (!pending) return;
+    model.desktopSwitch = null;
+    await desktopStop({
+      input: { sessionId: pending.sessionId, reason: 'SWITCHED' },
+      toastError: false,
+    });
+    model.desktopOpen = false;
+    await nextTick();
+    showDesktop(pending.peerId);
   }
 
   async function sendDraft() {
@@ -959,7 +1013,7 @@ ${model.self.downloadsDir}`
                       className="shrink-0 text-neutral-80 hover:text-neutral-110"
                       title={`远程桌面：${model.activePeer.name}`}
                       aria-label="远程桌面"
-                      on:click={() => openDesktop(model.activePeer.id)}
+                      on:click={() => void openDesktop(model.activePeer.id)}
                     >
                       <span
                         className="icon-[codicon--share-window] align-middle text-[13px] sm:mr-1"
@@ -1120,6 +1174,39 @@ ${model.self.downloadsDir}`
         />
       )}
 
+      {model.desktopSwitch && (
+        <Dialog
+          title="切换远程桌面"
+          size="compact"
+          onClose={() => {
+            model.desktopSwitch = null;
+          }}
+        >
+          <p className="m-0 text-[12px] leading-relaxed text-neutral-90">
+            当前正在与{' '}
+            <strong className="text-neutral-110">{model.desktopSwitch.currentName}</strong>{' '}
+            进行远程桌面。
+          </p>
+          <p className="mt-2 mb-0 text-[12px] leading-relaxed text-neutral-80">
+            结束当前会话并连接到{' '}
+            <strong className="text-neutral-110">{model.desktopSwitch.nextName}</strong>？
+          </p>
+          <DialogActions>
+            <Button
+              variant="secondary"
+              on:click={() => {
+                model.desktopSwitch = null;
+              }}
+            >
+              取消
+            </Button>
+            <Button variant="danger" on:click={() => void confirmDesktopSwitch()}>
+              结束并切换
+            </Button>
+          </DialogActions>
+        </Dialog>
+      )}
+
       {model.desktopOpen && (
         <RemoteDesktopDialog
           peers={model.peers}
@@ -1128,9 +1215,15 @@ ${model.self.downloadsDir}`
           gatewayId={model.self.gatewayId}
           localAddressHint={browserMode ? undefined : model.self.host}
           initialSessionId={model.desktopSessionId}
+          minimized={model.desktopMinimized}
+          onMinimize={() => {
+            model.desktopMinimized = true;
+          }}
           onClose={() => {
             model.desktopOpen = false;
+            model.desktopMinimized = false;
             model.desktopSessionId = '';
+            model.desktopPeerId = '';
           }}
         />
       )}

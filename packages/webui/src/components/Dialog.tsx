@@ -14,6 +14,7 @@ export default function Dialog(props: {
   size?: 'default' | 'compact' | 'wide' | 'screen';
   className?: string;
   descriptionId?: string;
+  open?: boolean;
 }) {
   const element = ref<HTMLDialogElement>();
   const titleId = `dialog-${Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) => b.toString(16).padStart(2, '0')).join('')}`;
@@ -21,13 +22,22 @@ export default function Dialog(props: {
   onMount(() => {
     const dialog = element.value!;
     const previous = document.activeElement;
-    dialog.showModal();
+    if (props.open ?? true) dialog.showModal();
     dialog.querySelector<HTMLElement>('[data-dialog-initial-focus]')?.focus();
     return () => {
       dialog.close();
       if (previous instanceof HTMLElement && previous.isConnected) previous.focus();
     };
   });
+
+  onChanges(() => {
+    const dialog = element.value!;
+    if (props.open ?? true) {
+      if (!dialog.open) dialog.showModal();
+    } else if (dialog.open) {
+      dialog.close();
+    }
+  }, [[props, ['open']]]);
 
   onChanges(() => {
     const dialog = element.value!;
