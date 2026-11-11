@@ -1,7 +1,7 @@
 {
   "name": "lanfly-input-darwin-arm64",
   "version": "0.2.0",
-  "description": "lanfly native keyboard and mouse sharing for macOS Apple Silicon",
+  "description": "lanfly native macOS input sharing and remote desktop module",
   "license": "MIT",
   "repository": {
     "type": "git",

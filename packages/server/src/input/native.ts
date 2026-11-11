@@ -16,6 +16,31 @@ export interface NativeInput {
   inject(event: string): void;
   reset(): void;
   stop(): void;
+  desktopStatus?(): string;
+  desktopRequestPermissions?(): void;
+  desktopStart?(sessionId: string, config: string): string;
+  desktopOffer?(sessionId: string, sdp: string): string;
+  desktopIce?(sessionId: string, candidate: string): void;
+  desktopStop?(sessionId: string): void;
+  desktopStopAll?(): void;
+  desktopPoll?(): string;
+  desktopBitrate?(sessionId: string, bitrate: number): void;
+  desktopKeyframe?(sessionId: string): void;
+  desktopInput?(event: string): void;
+}
+
+export interface NativeDesktop {
+  desktopStatus(): string;
+  desktopRequestPermissions(): void;
+  desktopStart(sessionId: string, config: string): string;
+  desktopOffer(sessionId: string, sdp: string): string;
+  desktopIce(sessionId: string, candidate: string): void;
+  desktopStop(sessionId: string): void;
+  desktopStopAll(): void;
+  desktopPoll(): string;
+  desktopBitrate(sessionId: string, bitrate: number): void;
+  desktopKeyframe(sessionId: string): void;
+  desktopInput(event: string): void;
 }
 
 let binding: NativeInput | undefined;
@@ -37,4 +62,11 @@ export function loadNative(): NativeInput | undefined {
   } catch {
     return undefined;
   }
+}
+
+/** Desktop screen capture and WebRTC are only present in native builds that include them. */
+export function loadDesktopNative(): NativeDesktop | undefined {
+  const native = loadNative();
+  if (!native || typeof native.desktopStatus !== 'function') return undefined;
+  return native as NativeDesktop;
 }

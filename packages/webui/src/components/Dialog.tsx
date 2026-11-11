@@ -11,7 +11,7 @@ export default function Dialog(props: {
   onClose: () => void;
   canClose?: boolean;
   placement?: 'top' | 'center';
-  size?: 'default' | 'compact' | 'wide';
+  size?: 'default' | 'compact' | 'wide' | 'screen';
   className?: string;
   descriptionId?: string;
 }) {
@@ -57,7 +57,7 @@ export default function Dialog(props: {
       aria-label={props.label ?? props.title}
       aria-labelledby={(props.label ?? props.title) === props.title ? titleId : undefined}
       aria-describedby={props.descriptionId}
-      className={`dialog fixed inset-x-0 mx-auto max-h-[calc(100dvh-40px)] overflow-auto rounded-dialog border border-neutral-60 bg-neutral-30 p-5 text-neutral-100 shadow-dialog ${(props.placement ?? 'top') === 'center' ? 'inset-y-0 my-auto' : 'top-[min(17vh,150px)] bottom-auto my-0'} ${(props.size ?? 'default') === 'wide' ? 'w-[min(580px,calc(100vw-40px))]' : (props.size ?? 'default') === 'compact' ? 'w-[min(320px,calc(100vw-40px))]' : 'w-[min(430px,calc(100vw-40px))]'} ${props.className ?? ''}`}
+      className={`dialog fixed inset-x-0 mx-auto max-h-[calc(100dvh-40px)] overflow-auto rounded-dialog border border-neutral-60 bg-neutral-30 p-5 text-neutral-100 shadow-dialog ${(props.placement ?? 'top') === 'center' ? 'inset-y-0 my-auto' : 'top-[min(17vh,150px)] bottom-auto my-0'} ${(props.size ?? 'default') === 'screen' ? 'w-[min(1080px,calc(100vw-24px))]' : (props.size ?? 'default') === 'wide' ? 'w-[min(580px,calc(100vw-40px))]' : (props.size ?? 'default') === 'compact' ? 'w-[min(320px,calc(100vw-40px))]' : 'w-[min(430px,calc(100vw-40px))]'} ${props.className ?? ''}`}
       on:cancel={(event) => {
         event.preventDefault();
         if (props.canClose ?? true) props.onClose();

@@ -110,12 +110,29 @@ npx lanfly --out ~/Downloads/lanfly
 
 重新构建会保留 `data.json`，它不会提交到 Git 或包含在 npm 发布包中。
 
+## 远程桌面（macOS）
+
+首版支持 macOS 12.3 或以上：一台被控 Mac 共享屏幕，控制端可以是另一台 lanfly 主机，也可以是打开主机局域网地址的浏览器或手机。视频通过 WebRTC 在两端直连，不经过 Node.js 中转，也不依赖云服务、STUN、TURN 或独立媒体服务器。
+
+1. 两台主机使用相同 Room ID 启动；控制端在设备详情或右上角点击 **远程桌面**。
+2. 被控 Mac 需要在“系统设置 → 隐私与安全性 → 屏幕录制”中授权运行 lanfly 的终端或 Node 进程。若希望允许远程控制，还需授权 **辅助功能**。
+3. 控制端选择设备、画质，并勾选是否请求远程控制，然后点击 **请求远程桌面**。
+4. 被控端本机 WebUI 会弹出授权请求。查看屏幕和远程控制是两项独立权限：接受后默认只共享画面，只有被控端明确勾选 **允许对方远程控制鼠标和键盘** 才会开启控制。
+5. 接受后浏览器通过 `RTCPeerConnection` 接收 H.264 视频，绑定到 `HTMLVideoElement`；支持画面自适应和全屏。停止按钮会同时释放视频流、PeerConnection、数据通道和按键状态。
+
+实现链路：macOS `ScreenCaptureKit` 持续采集主显示器 → `VideoToolbox` 硬件 H.264（Constrained Baseline，默认 30 FPS、4 Mbps、最高 1080p）→ Rust `webrtc-rs` 发送 RTP。SDP 和 ICE 只通过 lanfly 现有 Node.js 信令与设备身份通道转发；编码帧不会进入 JavaScript。远程键鼠事件通过已授权的 WebRTC DataChannel（DTLS 加密）直接发送到被控 Mac，由现有 Rust + Quartz 注入，不经过 Node.js 转发。
+
+远程桌面会话使用唯一 `sessionId`，并绑定发起设备身份、目标设备和一次性令牌；SDP、ICE、停止和输入消息都会校验来源设备和令牌。连接远程桌面时会自动停止现有键鼠共享，避免两套输入状态冲突。一次只允许一个远程桌面会话，只采集主显示器；不包含音频、剪贴板同步或文件跨屏拖拽。首版只使用局域网 host ICE candidate，不支持跨 NAT、VLAN 或公网。
+
+从源码开发时需要运行 `pnpm build:native` 重新编译包含桌面模块的原生文件；正式发布包需按 macOS 架构包含带桌面模块的预编译 `lanfly-input-darwin-*`。
+
 ## 安全提醒
 
 lanfly 面向可信局域网，类似 LocalSend，不是公网通信工具。
 
 - **聊天和文件内容是 HTTP 明文**，同一网段内能抓包的人可以看到。不要在不可信 Wi-Fi 上传送敏感信息。
 - **Room ID 不是访问密码**，会以明文传输；能访问主机网页的人可以直接以浏览器设备加入。
+- **远程桌面使用 WebRTC/DTLS-SRTP 加密**，但授权确认和信令仍依赖本机 WebUI；请只对可信设备授权。屏幕采集只在被控端明确接受后启动，查看和远程控制分别授权。
 - **不支持跨 NAT、跨 VLAN、VPN 或公网**，只适用于同一局域网。
 - 不支持离线消息、断点续传、文件夹传输或历史记录；关闭终端后，本次会话的设备、消息和传输记录都会清空，主机下载目录中的文件会保留，浏览器下载邀请会失效。
 
@@ -150,7 +167,7 @@ pnpm test       # 单元 + 双实例集成测试
 
 构建和开发脚本是 TypeScript，由 Bun 执行；发布到 npm 的 `lanfly` 包仍使用 Node 运行。更多实现细节可以直接看 `packages/`。
 
-键鼠实现位于 `native/`（Rust/Neon/Quartz）和 `packages/server/src/input/`。本地开发先构建 `native/index.node`；正式包使用 `lanfly-input-darwin-arm64` / `lanfly-input-darwin-x64` 可选依赖。`pnpm build` 仅构建 JS 和 WebUI，不要求在其他系统上编译 Rust。
+键鼠和远程桌面实现位于 `native/`（Rust/Neon/Quartz/ScreenCaptureKit/VideoToolbox/webrtc-rs）和 `packages/server/src/input/`、`packages/server/src/desktop/`。本地开发先运行 `pnpm build:native` 构建包含桌面模块的 `native/index.node`；正式包使用 `lanfly-input-darwin-arm64` / `lanfly-input-darwin-x64` 可选依赖。`pnpm build` 仅构建 JS 和 WebUI，不要求在其他系统上编译 Rust。
 
 服务端通过 HID 层事件拦截和后台光标控制锁定本机鼠标。macOS 后台光标控制需要动态解析 WindowServer 的非公开接口；系统不提供该接口或锁定失败时，会停止共享并在 WebUI 提示，不会继续同时移动两端光标。
 

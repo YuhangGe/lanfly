@@ -3,6 +3,7 @@ import type {
   FileUploadRequest,
   AppState,
   ChatMessage,
+  DesktopEvent,
   MessageStatus,
   PeerView,
   SelfInfo,
@@ -30,10 +31,12 @@ import Dialog from './components/Dialog';
 import InputSharingDialog from './components/InputSharingDialog';
 import MessageItem from './components/MessageItem';
 import PeerList from './components/PeerList';
+import RemoteDesktopDialog from './components/RemoteDesktopDialog';
 import Toasts from './components/Toasts';
 import { ActionError } from './service/action';
 import { browserMode, browserName, eventPath, joinBrowser, renameBrowser } from './service/browser';
 import { DeferredFiles } from './service/deferred-files';
+import { emitDesktopEvent } from './service/desktop';
 
 const EMPTY_SELF: SelfInfo = {
   id: '',
@@ -88,6 +91,9 @@ export default function App() {
     dragging: false,
     addOpen: false,
     inputOpen: false,
+    desktopOpen: false,
+    desktopPeerId: '',
+    desktopSessionId: '',
     addAddress: '',
     addBusy: false,
     addError: '',
@@ -337,6 +343,24 @@ export default function App() {
       const transfer = parseEvent<TransferView>(event);
       if (transfer) applyTransfer(transfer);
     });
+    source.addEventListener('desktop', (event) => {
+      const payload = parseEvent<DesktopEvent>(event);
+      if (!payload) return;
+      emitDesktopEvent(payload);
+      if (payload.type === 'request' && !browserMode) {
+        model.desktopPeerId = model.activePeerId;
+        model.desktopSessionId = payload.session.sessionId;
+        model.inputOpen = false;
+        model.desktopOpen = true;
+      }
+    });
+  }
+
+  function openDesktop(peerId = model.activePeerId) {
+    model.desktopPeerId = peerId;
+    model.desktopSessionId = '';
+    model.inputOpen = false;
+    model.desktopOpen = true;
   }
 
   async function sendDraft() {
@@ -651,6 +675,16 @@ export default function App() {
           </div>
         )}
         <div className="ml-auto flex items-center gap-1.5">
+          <Button
+            size="compact"
+            variant="ghost"
+            title="远程桌面"
+            aria-label="远程桌面"
+            on:click={() => openDesktop()}
+          >
+            <span className="icon-[codicon--share-window] text-[14px] sm:mr-1" aria-hidden="true" />
+            <span className="max-[760px]:hidden">远程桌面</span>
+          </Button>
           {!browserMode && (
             <Button
               size="compact"
@@ -919,6 +953,24 @@ export default function App() {
                     </span>
                   </div>
                 </div>
+                {model.activePeer.kind !== 'browser' &&
+                  model.activePeer.online &&
+                  model.activePeer.id !== (browserMode ? model.self.gatewayId : undefined) && (
+                    <Button
+                      size="compact"
+                      variant="ghost"
+                      className="shrink-0 text-neutral-80 hover:text-neutral-110"
+                      title={`远程桌面：${model.activePeer.name}`}
+                      aria-label="远程桌面"
+                      on:click={() => openDesktop(model.activePeer.id)}
+                    >
+                      <span
+                        className="icon-[codicon--share-window] align-middle text-[13px] sm:mr-1"
+                        aria-hidden="true"
+                      />
+                      <span className="max-[760px]:hidden">远程桌面</span>
+                    </Button>
+                  )}
                 {!browserMode && (
                   <Button
                     size="compact"
@@ -1058,6 +1110,20 @@ export default function App() {
           activePeerId={model.activePeerId}
           onClose={() => {
             model.inputOpen = false;
+          }}
+        />
+      )}
+
+      {model.desktopOpen && (
+        <RemoteDesktopDialog
+          peers={model.peers}
+          activePeerId={model.desktopPeerId || model.activePeerId}
+          browserMode={browserMode}
+          gatewayId={model.self.gatewayId}
+          initialSessionId={model.desktopSessionId}
+          onClose={() => {
+            model.desktopOpen = false;
+            model.desktopSessionId = '';
           }}
         />
       )}

@@ -1,4 +1,13 @@
 import {
+  DESKTOP_TOKEN_HEADER,
+  PEER_DESKTOP_ACCEPT_PATH,
+  PEER_DESKTOP_ERROR_PATH,
+  PEER_DESKTOP_ICE_PATH,
+  PEER_DESKTOP_OFFER_PATH,
+  PEER_DESKTOP_REJECT_PATH,
+  PEER_DESKTOP_REQUEST_PATH,
+  PEER_DESKTOP_STATE_PATH,
+  PEER_DESKTOP_STOP_PATH,
   PEER_HELLO_PATH,
   PEER_INFO_PATH,
   PEER_MESSAGES_PATH,
@@ -64,6 +73,95 @@ export class RemoteClient {
 
   async sendMessage(target: PeerTarget, payload: Record<string, unknown>): Promise<void> {
     await this.#requestJson(target, 'POST', PEER_MESSAGES_PATH, payload);
+  }
+
+  async desktopRequest(target: PeerTarget, payload: unknown): Promise<void> {
+    await this.#requestJson(target, 'POST', PEER_DESKTOP_REQUEST_PATH, payload);
+  }
+
+  async desktopAccept(target: PeerTarget, payload: unknown): Promise<void> {
+    await this.#requestJson(target, 'POST', PEER_DESKTOP_ACCEPT_PATH, payload);
+  }
+
+  async desktopReject(target: PeerTarget, payload: unknown): Promise<void> {
+    await this.#requestJson(target, 'POST', PEER_DESKTOP_REJECT_PATH, payload);
+  }
+
+  async desktopOffer(
+    target: PeerTarget,
+    payload: unknown,
+    token: string,
+  ): Promise<{ sdp: string; width: number; height: number }> {
+    const data = await this.#requestJson(
+      target,
+      'POST',
+      PEER_DESKTOP_OFFER_PATH,
+      payload,
+      REQUEST_TIMEOUT_MS,
+      undefined,
+      token,
+    );
+    if (
+      typeof data !== 'object' ||
+      data === null ||
+      typeof (data as { sdp?: unknown }).sdp !== 'string'
+    ) {
+      throwActionError(ErrorCodes.PEER_PROTOCOL);
+    }
+    const value = data as { sdp: string; width?: unknown; height?: unknown };
+    return {
+      sdp: value.sdp,
+      width: typeof value.width === 'number' ? value.width : 0,
+      height: typeof value.height === 'number' ? value.height : 0,
+    };
+  }
+
+  async desktopIce(target: PeerTarget, payload: unknown, token: string): Promise<void> {
+    await this.#requestJson(
+      target,
+      'POST',
+      PEER_DESKTOP_ICE_PATH,
+      payload,
+      REQUEST_TIMEOUT_MS,
+      undefined,
+      token,
+    );
+  }
+
+  async desktopStop(target: PeerTarget, payload: unknown, token: string): Promise<void> {
+    await this.#requestJson(
+      target,
+      'POST',
+      PEER_DESKTOP_STOP_PATH,
+      payload,
+      REQUEST_TIMEOUT_MS,
+      undefined,
+      token,
+    );
+  }
+
+  async desktopState(target: PeerTarget, payload: unknown, token: string): Promise<void> {
+    await this.#requestJson(
+      target,
+      'POST',
+      PEER_DESKTOP_STATE_PATH,
+      payload,
+      REQUEST_TIMEOUT_MS,
+      undefined,
+      token,
+    );
+  }
+
+  async desktopError(target: PeerTarget, payload: unknown, token: string): Promise<void> {
+    await this.#requestJson(
+      target,
+      'POST',
+      PEER_DESKTOP_ERROR_PATH,
+      payload,
+      REQUEST_TIMEOUT_MS,
+      undefined,
+      token,
+    );
   }
 
   async offerTransfer(target: PeerTarget, payload: TransferOfferPayload): Promise<string> {
@@ -159,6 +257,7 @@ export class RemoteClient {
     payload: unknown,
     timeoutMs = REQUEST_TIMEOUT_MS,
     signal?: AbortSignal,
+    token?: string,
   ): Promise<unknown> {
     const body = payload === undefined ? Buffer.alloc(0) : Buffer.from(JSON.stringify(payload));
     const room = roomHeaders(this.room);
@@ -170,6 +269,7 @@ export class RemoteClient {
       headers['content-type'] = 'application/json';
       headers['content-length'] = String(body.length);
     }
+    if (token) headers[DESKTOP_TOKEN_HEADER] = token;
 
     const init: RequestInit = {
       method,

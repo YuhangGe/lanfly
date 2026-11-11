@@ -26,3 +26,19 @@ export const inputEnable = rootProxy.inputEnable as unknown as typeof ServerActi
 export const inputDisable = rootProxy.inputDisable as unknown as typeof ServerActions.inputDisable;
 export const inputConnect = rootProxy.inputConnect as unknown as typeof ServerActions.inputConnect;
 export const inputForget = rootProxy.inputForget as unknown as typeof ServerActions.inputForget;
+export const desktopStatus =
+  rootProxy.desktopStatus as unknown as typeof ServerActions.desktopStatus;
+export const desktopPermissions =
+  rootProxy.desktopPermissions as unknown as typeof ServerActions.desktopPermissions;
+export const desktopState = rootProxy.desktopState as unknown as typeof ServerActions.desktopState;
+export const desktopRequest =
+  rootProxy.desktopRequest as unknown as typeof ServerActions.desktopRequest;
+export const desktopAccept =
+  rootProxy.desktopAccept as unknown as typeof ServerActions.desktopAccept;
+export const desktopReject =
+  rootProxy.desktopReject as unknown as typeof ServerActions.desktopReject;
+export const desktopOffer = rootProxy.desktopOffer as unknown as typeof ServerActions.desktopOffer;
+export const desktopIce = rootProxy.desktopIce as unknown as typeof ServerActions.desktopIce;
+export const desktopStop = rootProxy.desktopStop as unknown as typeof ServerActions.desktopStop;
+export const desktopBitrate =
+  rootProxy.desktopBitrate as unknown as typeof ServerActions.desktopBitrate;

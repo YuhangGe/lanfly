@@ -41,6 +41,8 @@ unsafe extern "C" {
     fn CGGetActiveDisplayList(max: u32, displays: *mut u32, count: *mut u32) -> i32;
     fn CGMainDisplayID() -> u32;
     fn CGDisplayBounds(display: u32) -> Rect;
+    fn CGDisplayPixelsWide(display: u32) -> usize;
+    fn CGDisplayPixelsHigh(display: u32) -> usize;
     fn CGDisplayHideCursor(display: u32) -> i32;
     fn CGDisplayShowCursor(display: u32) -> i32;
     fn CGWarpMouseCursorPosition(point: Point) -> i32;
@@ -275,6 +277,40 @@ fn permissions_status() -> (bool, bool) {
     let monitoring = unsafe { CGPreflightListenEventAccess() } || probe_keyboard_access(1);
     (accessibility, monitoring)
 }
+pub(crate) fn display_ids() -> Vec<u32> {
+    let mut count = 0u32;
+    if unsafe { CGGetActiveDisplayList(0, null_mut(), &mut count) } != 0 {
+        return Vec::new();
+    }
+    let mut ids = vec![0u32; count as usize];
+    if unsafe { CGGetActiveDisplayList(count, ids.as_mut_ptr(), &mut count) } != 0 {
+        return Vec::new();
+    }
+    ids.truncate(count as usize);
+    ids
+}
+
+pub(crate) fn main_display_id() -> u32 {
+    unsafe { CGMainDisplayID() }
+}
+
+pub(crate) fn display_bounds_tuple(id: u32) -> (f64, f64, f64, f64) {
+    let bounds = unsafe { CGDisplayBounds(id) };
+    (
+        bounds.origin.x,
+        bounds.origin.y,
+        bounds.size.width,
+        bounds.size.height,
+    )
+}
+
+pub(crate) fn display_pixels(id: u32) -> (u32, u32) {
+    (
+        unsafe { CGDisplayPixelsWide(id) } as u32,
+        unsafe { CGDisplayPixelsHigh(id) } as u32,
+    )
+}
+
 pub fn status() -> Value {
     let (accessibility, input_monitoring) = permissions_status();
     json!({ "screens": screens(), "accessibility": accessibility, "inputMonitoring": input_monitoring })

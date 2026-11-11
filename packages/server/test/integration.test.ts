@@ -1,4 +1,10 @@
-import type { AppState, ChatMessage, PeerInfo, TransferView } from '@lanfly/common';
+import type {
+  AppState,
+  ChatMessage,
+  DesktopSessionView,
+  PeerInfo,
+  TransferView,
+} from '@lanfly/common';
 
 import { afterEach, describe, expect, it } from 'bun:test';
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -358,6 +364,86 @@ describe('双实例集成', () => {
     });
     expect(result.code).toBe(1);
     expect(result.text).toContain('--secret');
+  });
+
+  it('远程桌面请求需要被控端确认，并拒绝伪造的设备身份', async () => {
+    await access(CLI).catch(() => {
+      throw new Error('未找到 dist/cli.js，请先运行 pnpm build');
+    });
+    const a = await startInstance({ name: 'DeskA', out: await newOutDir() });
+    const b = await startInstance({ name: 'DeskB', out: await newOutDir() });
+    await connect(a, b);
+    const target = await waitFor('A 看到 B', async () => {
+      const current = await state(a);
+      return current.peers.find((peer) => peer.name === 'DeskB');
+    });
+    const requested = await rpc<DesktopSessionView>(a, 'desktopRequest', {
+      peerId: target.id,
+      control: true,
+    });
+    expect(requested.error).toBeUndefined();
+    const incoming = await waitFor('B 收到授权请求', async () => {
+      const current = await rpc<{ sessions: DesktopSessionView[] }>(b, 'desktopState');
+      return current.data?.sessions.find(
+        (session) => session.sessionId === requested.data?.sessionId,
+      );
+    });
+    expect(incoming.role).toBe('controlled');
+    expect(incoming.phase).toBe('pending');
+    expect(incoming.controlRequested).toBe(true);
+    expect(incoming.control).toBe(false);
+
+    const rejected = await rpc(b, 'desktopReject', { sessionId: incoming.sessionId });
+    expect(rejected.error).toBeUndefined();
+    await waitFor('B 清除被拒绝的会话', async () => {
+      const current = await rpc<{ sessions: DesktopSessionView[] }>(b, 'desktopState');
+      return current.data?.sessions.length === 0 ? true : undefined;
+    });
+
+    const canceled = await rpc<DesktopSessionView>(a, 'desktopRequest', {
+      peerId: target.id,
+      control: false,
+    });
+    expect(canceled.error).toBeUndefined();
+    await waitFor('B 再次收到授权请求', async () => {
+      const current = await rpc<{ sessions: DesktopSessionView[] }>(b, 'desktopState');
+      return current.data?.sessions.some(
+        (session) => session.sessionId === canceled.data?.sessionId,
+      )
+        ? true
+        : undefined;
+    });
+    const stopped = await rpc(a, 'desktopStop', {
+      sessionId: canceled.data!.sessionId,
+      reason: 'CANCELED',
+    });
+    expect(stopped.error).toBeUndefined();
+    await waitFor('发起方取消后 B 清除请求', async () => {
+      const current = await rpc<{ sessions: DesktopSessionView[] }>(b, 'desktopState');
+      return current.data?.sessions.length === 0 ? true : undefined;
+    });
+
+    const forgedId = crypto.randomUUID();
+    const forged = await fetch(`${b.base}/api/v1/peer/desktop/request`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-lanfly-room': '123456',
+        'x-lanfly-id': forgedId,
+      },
+      body: JSON.stringify({
+        sessionId: crypto.randomUUID(),
+        from: {
+          id: forgedId,
+          name: 'Forged',
+          port: 9,
+          version: '0.2.0',
+          roomId: '123456',
+        },
+        control: true,
+      }),
+    });
+    expect(forged.status).toBe(403);
   });
 
   it('端口被占用时自动顺延', async () => {

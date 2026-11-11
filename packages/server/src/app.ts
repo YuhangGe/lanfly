@@ -19,6 +19,7 @@ import type { ServerConfig } from './config';
 import { ErrorCodes, errorCode, throwActionError } from './core/errors';
 import { createHttpHandler } from './core/router';
 import { randomToken } from './core/security';
+import { DesktopService } from './desktop/service';
 import { MulticastDiscovery } from './discovery/multicast';
 import { InputService } from './input/service';
 import { logger } from './logger';
@@ -46,6 +47,7 @@ export class Application {
   readonly config: ServerConfig;
   readonly input: InputService;
   readonly network: BrowserNetwork;
+  readonly desktop: DesktopService;
 
   #server: http.Server | undefined;
   #discovery: MulticastDiscovery | undefined;
@@ -62,6 +64,7 @@ export class Application {
     this.remote = new RemoteClient(this.identity, this.identity.room);
     this.input = new InputService(this.identity.name, this.events, { roomId: config.roomId });
     this.network = new BrowserNetwork(this);
+    this.desktop = new DesktopService(this);
     this.events.peersProvider = () => this.network.peers();
     this.events.onPeersChanged = () => this.network.publishBrowserPeers();
   }
@@ -90,6 +93,7 @@ export class Application {
     }
     this.input.listen(port);
     this.input.resume();
+    this.desktop.start();
 
     if (!this.config.noDiscovery) {
       this.#discovery = new MulticastDiscovery(
@@ -115,6 +119,7 @@ export class Application {
   }
 
   async stop(): Promise<void> {
+    await this.desktop.stop();
     await this.input.stop();
     if (this.#pruneTimer) clearInterval(this.#pruneTimer);
     if (this.#heartbeatTimer) clearInterval(this.#heartbeatTimer);

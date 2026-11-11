@@ -1,8 +1,10 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
 import {
+  DESKTOP_TOKEN_HEADER,
   helloRequestSchema,
   JSON_BODY_LIMIT,
+  PEER_DESKTOP_PREFIX,
   PEER_HELLO_PATH,
   PEER_INFO_PATH,
   PEER_MESSAGES_PATH,
@@ -16,6 +18,7 @@ import { unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
+import { z } from 'zod';
 
 import type { Application } from '../app';
 
@@ -36,6 +39,48 @@ export async function handlePeerRequest(
   const fullPath = `${pathname}${search}`;
   if (!matchesRoom(app.identity.room, request.headers)) {
     sendError(response, 401, 'ROOM_MISMATCH');
+    return;
+  }
+
+  if (pathname.startsWith(PEER_DESKTOP_PREFIX)) {
+    if (request.method !== 'POST') {
+      sendError(response, 405, 'METHOD_NOT_ALLOWED');
+      return;
+    }
+    const body = await readJsonAuthorized(app, request, response, fullPath);
+    if (!body) return;
+    const sourceId = String(request.headers['x-lanfly-id'] ?? '');
+    if (!sourceId) {
+      sendError(response, 401, 'DESKTOP_UNAUTHORIZED');
+      return;
+    }
+    const rawToken = request.headers[DESKTOP_TOKEN_HEADER];
+    const token = Array.isArray(rawToken) ? rawToken[0] : rawToken;
+    try {
+      const result = await app.desktop.handlePeer(
+        pathname.slice(PEER_DESKTOP_PREFIX.length),
+        body,
+        host,
+        sourceId,
+        token,
+      );
+      sendJson(response, 200, result ?? { ok: true });
+    } catch (error) {
+      if (isActionFailure(error)) {
+        sendError(response, desktopStatus(error.code), error.code);
+        return;
+      }
+      if (error instanceof HttpError) {
+        sendError(response, error.status, error.message);
+        return;
+      }
+      if (error instanceof z.ZodError) {
+        sendError(response, 400, 'BAD_REQUEST');
+        return;
+      }
+      logger.error(error);
+      sendError(response, 500, ErrorCodes.INTERNAL_ERROR);
+    }
     return;
   }
 
@@ -317,6 +362,18 @@ async function handleIncomingUpload(
   } finally {
     app.transfers.clearCancel(transferId);
   }
+}
+
+function desktopStatus(code: string): number {
+  if (
+    code === ErrorCodes.DESKTOP_UNAUTHORIZED ||
+    code === ErrorCodes.DESKTOP_TOKEN_INVALID ||
+    code === ErrorCodes.DESKTOP_PEER_MISMATCH
+  )
+    return 403;
+  if (code === ErrorCodes.DESKTOP_NOT_FOUND) return 404;
+  if (code === ErrorCodes.DESKTOP_BUSY || code === ErrorCodes.DESKTOP_STATE) return 409;
+  return 400;
 }
 
 function sendPeerError(response: ServerResponse, error: unknown): void {

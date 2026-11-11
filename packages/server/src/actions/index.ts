@@ -7,9 +7,16 @@ import {
   transferIdInput,
   inputSettingsSchema,
   inputConnectSchema,
+  desktopRequestInput,
+  desktopAcceptInput,
+  desktopRejectInput,
+  desktopOfferInput,
+  desktopIceInput,
+  desktopBitrateInput,
 } from '@lanfly/common';
 
 import { defineAction, type ServerAction } from '../core/action';
+import { throwActionError } from '../core/errors';
 
 export const appState = defineAction(async (context) => context.app.getState());
 
@@ -45,14 +52,44 @@ export const inputPermissions = defineAction(async ({ app }) => app.input.permis
 export const inputConfigure = defineAction(inputSettingsSchema, async ({ app }, settings) =>
   app.input.configure(settings),
 );
-export const inputEnable = defineAction(async ({ app }) => app.input.enable());
+export const inputEnable = defineAction(async ({ app }) => {
+  if (app.desktop.hasActive()) throwActionError('INPUT_BUSY');
+  return app.input.enable();
+});
 export const inputDisable = defineAction(async ({ app }) => app.input.disable());
 export const inputConnect = defineAction(
   inputConnectSchema,
-  async ({ app }, { peerId, role, edge }) =>
-    app.input.connect(app.peerTarget(peerId), { role, edge }),
+  async ({ app }, { peerId, role, edge }) => {
+    if (app.desktop.hasActive()) throwActionError('INPUT_BUSY');
+    return app.input.connect(app.peerTarget(peerId), { role, edge });
+  },
 );
 export const inputForget = defineAction(async ({ app }) => app.input.forget());
+
+export const desktopStatus = defineAction(async ({ app }) => app.desktop.status());
+export const desktopPermissions = defineAction(async ({ app }) => app.desktop.permissions());
+export const desktopState = defineAction(async ({ app }) => app.desktop.state(app.identity.id));
+export const desktopRequest = defineAction(desktopRequestInput, async ({ app }, input) =>
+  app.desktop.request(app.identity.id, input),
+);
+export const desktopAccept = defineAction(desktopAcceptInput, async ({ app }, input) =>
+  app.desktop.accept(input.sessionId, input.control),
+);
+export const desktopReject = defineAction(desktopRejectInput, async ({ app }, input) =>
+  app.desktop.reject(input.sessionId, input.reason),
+);
+export const desktopOffer = defineAction(desktopOfferInput, async ({ app }, input) =>
+  app.desktop.offer(app.identity.id, input.sessionId, input.sdp),
+);
+export const desktopIce = defineAction(desktopIceInput, async ({ app }, input) =>
+  app.desktop.ice(app.identity.id, input.sessionId, input.candidate),
+);
+export const desktopStop = defineAction(desktopRejectInput, async ({ app }, input) =>
+  app.desktop.stopSession(app.identity.id, input.sessionId, input.reason),
+);
+export const desktopBitrate = defineAction(desktopBitrateInput, async ({ app }, input) =>
+  app.desktop.setBitrate(app.identity.id, input.sessionId, input.bitrate),
+);
 
 export const actions = {
   appState,
@@ -71,6 +108,16 @@ export const actions = {
   inputDisable,
   inputConnect,
   inputForget,
+  desktopStatus,
+  desktopPermissions,
+  desktopState,
+  desktopRequest,
+  desktopAccept,
+  desktopReject,
+  desktopOffer,
+  desktopIce,
+  desktopStop,
+  desktopBitrate,
 } satisfies Record<string, ServerAction>;
 
 export type ActionName = keyof typeof actions;
