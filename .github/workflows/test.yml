@@ -1,8 +1,7 @@
 name: test
 
+# Manual only: run checks when needed without firing on every push or PR.
 on:
-  push:
-  pull_request:
   workflow_dispatch:
 
 permissions:

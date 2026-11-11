@@ -138,7 +138,7 @@ pnpm test          # 单元 + 双实例集成测试
   3. `publish`：等待所有 platform 包完成后，构建并发布根包 `lanfly`。
 - 两个 platform 包和主包都使用 npm trusted publishing，需要在 npm 上为三个包配置 trusted publisher。
 - 已存在的版本会被跳过，重复运行是安全的。
-- `.github/workflows/test.yml` 在 push / PR 时运行 lint、构建和测试，不发布。
+- `.github/workflows/test.yml` 也只支持手动触发，按需运行 lint、构建和测试，不发布，不会在 push / PR 后自动执行。
 - 发布新版本前运行 `npm version patch`（或指定版本）。`version` 钩子会同步：
   - `platform/*/package.json` 版本；
   - 根包 `optionalDependencies`；
