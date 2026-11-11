@@ -70,10 +70,10 @@
   "lint-staged": {
     "*.{ts,tsx}": [
       "oxlint --type-aware --fix",
-      "oxfmt"
+      "oxfmt --no-error-on-unmatched-pattern"
     ],
     "*.{js,jsx,mjs,cjs,json,md,yml,yaml}": [
-      "oxfmt"
+      "oxfmt --no-error-on-unmatched-pattern"
     ]
   },
   "engines": {
