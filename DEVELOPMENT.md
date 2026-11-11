@@ -1,6 +1,6 @@
 # lanfly 开发与实现说明
 
-本文记录 lanfly 的内部结构、关键实现、构建发布和测试方式。面向使用者的操作说明在 [README.md](README.md)。
+本文记录 lanfly 的内部结构、关键实现、构建发布和测试方式。面向使用者的操作说明见 [README.md](README.md)（English）和 [README_ZH.md](README_ZH.md)（中文）。
 
 ## 仓库结构
 
