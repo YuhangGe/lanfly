@@ -64,3 +64,15 @@ export async function renameBrowser(name: string): Promise<void> {
   if (!response.ok) throw new Error('修改名称失败');
   remember('lanfly.browser.name', name);
 }
+
+/** Source address the gateway sees for this browser, used to de-mDNS desktop host candidates. */
+export async function browserLocalAddress(): Promise<string> {
+  try {
+    const response = await fetch('/api/v1/browser/address', { cache: 'no-store' });
+    if (!response.ok) return '';
+    const value = (await response.json()) as { address?: unknown };
+    return typeof value.address === 'string' ? value.address : '';
+  } catch {
+    return '';
+  }
+}

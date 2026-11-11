@@ -9,7 +9,6 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
-use crossbeam_channel::Receiver;
 
 use rtc::interceptor::{Interceptor, Registry, Slot};
 use rtc::media::Sample;
@@ -42,7 +41,7 @@ use webrtc::rtp_transceiver::RtpSender;
 use webrtc::runtime::TokioRuntime;
 
 use crate::desktop_capture::{self, Capture, CapturedFrame};
-use crate::desktop_encoder::{EncodedFrame, Encoder};
+use crate::desktop_encoder::{Encoder, FrameQueue};
 use crate::desktop_input;
 
 const MAX_QUEUED_EVENTS: usize = 256;
@@ -97,6 +96,7 @@ struct DesktopHandler {
     events: Arc<Mutex<VecDeque<Value>>>,
     force_keyframe: Arc<AtomicBool>,
     control: Arc<AtomicBool>,
+    connected: Arc<AtomicBool>,
     runtime: Arc<dyn Runtime>,
 }
 
@@ -116,7 +116,15 @@ impl PeerConnectionEventHandler for DesktopHandler {
             json!({"kind": "state", "state": state_name(state)}),
         );
         if state == RTCPeerConnectionState::Connected {
+            self.connected.store(true, Ordering::Release);
             self.force_keyframe.store(true, Ordering::Release);
+        } else if matches!(
+            state,
+            RTCPeerConnectionState::Disconnected
+                | RTCPeerConnectionState::Failed
+                | RTCPeerConnectionState::Closed
+        ) {
+            self.connected.store(false, Ordering::Release);
         }
     }
 
@@ -226,6 +234,7 @@ struct Session {
     runtime: Arc<tokio::runtime::Runtime>,
     events: Arc<Mutex<VecDeque<Value>>>,
     force_keyframe: Arc<AtomicBool>,
+    connected: Arc<AtomicBool>,
     running: Arc<AtomicBool>,
     capture: Mutex<Option<Capture>>,
     encoder: Mutex<Option<Encoder>>,
@@ -234,7 +243,7 @@ struct Session {
     sender: Arc<dyn RtpSender>,
     ssrc: u32,
     payload_type: Arc<AtomicU8>,
-    encoded_rx: Mutex<Option<Receiver<EncodedFrame>>>,
+    encoded_queue: Arc<FrameQueue>,
     streaming: AtomicBool,
     stopped: AtomicBool,
     width: u32,
@@ -257,13 +266,16 @@ impl Session {
             pc.set_remote_description(offer)
                 .await
                 .map_err(|error| format!("DESKTOP_SDP_FAILED: {error}"))?;
-            let answer = pc
+            let mut answer = pc
                 .create_answer(None)
                 .await
                 .map_err(|error| format!("DESKTOP_ANSWER_FAILED: {error}"))?;
             pc.set_local_description(answer.clone())
                 .await
                 .map_err(|error| format!("DESKTOP_ANSWER_FAILED: {error}"))?;
+            // Advertise the level emitted by VideoToolbox to the remote peer. The local
+            // description keeps the negotiated default; level asymmetry is permitted by RFC 6184.
+            answer.sdp = advertise_h264_level(&answer.sdp);
             Ok::<_, String>(answer)
         })?;
         let parameters = self
@@ -302,11 +314,9 @@ impl Session {
         if self.streaming.swap(true, Ordering::AcqRel) {
             return;
         }
-        let receiver = match self.encoded_rx.lock().unwrap().take() {
-            Some(receiver) => receiver,
-            None => return,
-        };
+        let queue = self.encoded_queue.clone();
         let track = self.track.clone();
+        let connected = self.connected.clone();
         let feedback_track = self.track.clone();
         let feedback_keyframe = self.force_keyframe.clone();
         let feedback_running = self.running.clone();
@@ -330,12 +340,23 @@ impl Session {
         let payload_type = self.payload_type.clone();
         let running = self.running.clone();
         self.runtime.spawn(Box::pin(async move {
+            let mut waiting_for_keyframe = true;
             while running.load(Ordering::Acquire) {
-                let frame = match receiver.recv_timeout(Duration::from_millis(20)) {
-                    Ok(frame) => frame,
-                    Err(crossbeam_channel::RecvTimeoutError::Timeout) => continue,
-                    Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
+                if !connected.load(Ordering::Acquire) {
+                    // The transport is not writable yet. Do not consume the queue: the first
+                    // keyframe sent before ICE/DTLS completes would otherwise be lost and the
+                    // decoder would wait for a PLI-triggered keyframe.
+                    waiting_for_keyframe = true;
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                    continue;
+                }
+                let Some(frame) = queue.wait_frame(Duration::from_millis(100)).await else {
+                    continue;
                 };
+                if waiting_for_keyframe && !frame.keyframe {
+                    continue;
+                }
+                waiting_for_keyframe = false;
                 let payload_type = payload_type.load(Ordering::Acquire);
                 if payload_type == 0 {
                     continue;
@@ -405,6 +426,7 @@ impl Session {
             return;
         }
         self.running.store(false, Ordering::Release);
+        self.encoded_queue.close();
         if let Ok(mut capture) = self.capture.lock() {
             if let Some(mut capture) = capture.take() {
                 capture.stop();
@@ -476,6 +498,28 @@ fn local_socket_address(value: Option<&str>) -> String {
     }
 }
 
+/// The browser offer advertises H.264 Level 3.1 (1280x720), while VideoToolbox emits
+/// Level 4.0 for a 1080p-class stream. The answer is allowed to choose its own level;
+/// rewrite the fmtp so Chrome configures the decoder for the stream actually being sent.
+fn advertise_h264_level(sdp: &str) -> String {
+    const KEY: &str = "profile-level-id=";
+    let mut output = String::with_capacity(sdp.len());
+    let mut rest = sdp;
+    while let Some(position) = rest.find(KEY) {
+        let end = position + KEY.len();
+        output.push_str(&rest[..end]);
+        let value = &rest[end..];
+        if value.len() >= 6 && value[..6].chars().all(|ch| ch.is_ascii_hexdigit()) {
+            output.push_str("42e028");
+            rest = &value[6..];
+        } else {
+            rest = value;
+        }
+    }
+    output.push_str(rest);
+    output
+}
+
 fn h264_codec() -> RTCRtpCodecParameters {
     RTCRtpCodecParameters {
         rtp_codec: RTCRtpCodec {
@@ -529,7 +573,7 @@ fn build_peer(
     let registry = registry.with(Slot::from(14_000), KeyframeFeedback::new());
     let setting_engine = SettingEngineBuilder::new()
         .with_multicast_dns_mode(rtc::ice::mdns::MulticastDnsMode::QueryOnly)
-        .with_multicast_dns_timeout(Some(Duration::from_secs(5)))
+        .with_multicast_dns_timeout(Some(Duration::from_secs(10)))
         .with_answering_dtls_role(RTCDtlsRole::Server)
         .build();
     let udp_address = local_socket_address(local_address);
@@ -641,15 +685,15 @@ pub fn start(session_id: &str, config_json: &str) -> Result<Value, String> {
         config.fps,
         capture_tx,
     )?;
-    let (encoded_tx, encoded_rx) = crossbeam_channel::bounded::<EncodedFrame>(3);
     let force_keyframe = Arc::new(AtomicBool::new(true));
+    let encoded_queue = FrameQueue::new(3, force_keyframe.clone());
     let mut encoder = match Encoder::start(
         capture.width(),
         capture.height(),
         config.fps,
         config.bitrate,
         capture_rx,
-        encoded_tx,
+        encoded_queue.clone(),
         force_keyframe.clone(),
     ) {
         Ok(encoder) => encoder,
@@ -674,10 +718,12 @@ pub fn start(session_id: &str, config_json: &str) -> Result<Value, String> {
     };
     let events = Arc::new(Mutex::new(VecDeque::new()));
     let control = Arc::new(AtomicBool::new(config.control));
+    let connected = Arc::new(AtomicBool::new(false));
     let handler = Arc::new(DesktopHandler {
         events: events.clone(),
         force_keyframe: force_keyframe.clone(),
         control: control.clone(),
+        connected: connected.clone(),
         runtime: Arc::new(TokioRuntime),
     });
     let (pc, track, sender, ssrc) = match build_peer(
@@ -701,6 +747,7 @@ pub fn start(session_id: &str, config_json: &str) -> Result<Value, String> {
         runtime,
         events,
         force_keyframe,
+        connected,
         running: Arc::new(AtomicBool::new(true)),
         capture: Mutex::new(Some(capture)),
         encoder: Mutex::new(Some(encoder)),
@@ -709,7 +756,7 @@ pub fn start(session_id: &str, config_json: &str) -> Result<Value, String> {
         sender,
         ssrc,
         payload_type: Arc::new(AtomicU8::new(0)),
-        encoded_rx: Mutex::new(Some(encoded_rx)),
+        encoded_queue,
         streaming: AtomicBool::new(false),
         stopped: AtomicBool::new(false),
         width: actual_width,
@@ -814,6 +861,13 @@ mod tests {
                 .iter()
                 .any(|feedback| feedback.typ == "nack" && feedback.parameter == "pli")
         );
+    }
+
+    #[test]
+    fn answer_advertises_the_level_videotoolbox_emits() {
+        let sdp = "a=fmtp:108 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f\r\n";
+        assert!(advertise_h264_level(sdp).contains("profile-level-id=42e028"));
+        assert!(advertise_h264_level("no fmtp here").eq("no fmtp here"));
     }
 
     #[test]

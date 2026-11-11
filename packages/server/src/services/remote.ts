@@ -97,7 +97,7 @@ export class RemoteClient {
       'POST',
       PEER_DESKTOP_OFFER_PATH,
       payload,
-      REQUEST_TIMEOUT_MS,
+      30_000,
       undefined,
       token,
     );

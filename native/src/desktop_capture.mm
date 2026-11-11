@@ -85,11 +85,16 @@ static uint32_t lf_even(uint32_t value) {
     SCStream *stream = self.stream;
     self.stream = nil;
     if (!stream) return;
+    // Detach the sample output first so no new frame is delivered while the stream stops.
+    if (self.output) {
+        NSError *removeError = nil;
+        [stream removeStreamOutput:self.output type:SCStreamOutputTypeScreen error:&removeError];
+    }
     dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
     [stream stopCaptureWithCompletionHandler:^(NSError *error) {
         dispatch_semaphore_signal(semaphore);
     }];
-    dispatch_semaphore_wait(semaphore, dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC));
+    dispatch_semaphore_wait(semaphore, dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC));
 }
 
 @end
@@ -124,7 +129,7 @@ extern "C" void *lf_capture_start(uint32_t max_width,
                                                   dispatch_semaphore_signal(contentSemaphore);
                                               }];
             if (dispatch_semaphore_wait(contentSemaphore,
-                                        dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC)) != 0) {
+                                        dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC)) != 0) {
                 lf_set_error(error_buffer, error_length, @"DESKTOP_CAPTURE_TIMEOUT");
                 return NULL;
             }
@@ -196,12 +201,20 @@ extern "C" void *lf_capture_start(uint32_t max_width,
                 dispatch_semaphore_signal(startSemaphore);
             }];
             if (dispatch_semaphore_wait(startSemaphore,
-                                        dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC)) != 0) {
+                                        dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC)) != 0) {
+                if (output) {
+                    NSError *removeError = nil;
+                    [stream removeStreamOutput:output type:SCStreamOutputTypeScreen error:&removeError];
+                }
                 [stream stopCaptureWithCompletionHandler:nil];
                 lf_set_error(error_buffer, error_length, @"DESKTOP_CAPTURE_TIMEOUT");
                 return NULL;
             }
             if (startError) {
+                if (output) {
+                    NSError *removeError = nil;
+                    [stream removeStreamOutput:output type:SCStreamOutputTypeScreen error:&removeError];
+                }
                 lf_set_error(error_buffer, error_length,
                              startError.localizedDescription ?: @"DESKTOP_PERMISSION");
                 return NULL;

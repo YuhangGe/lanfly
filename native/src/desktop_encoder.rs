@@ -5,7 +5,7 @@ use std::ffi::c_void;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use core_foundation::base::TCFType;
@@ -15,7 +15,7 @@ use core_foundation::number::CFNumber;
 use core_foundation::string::CFString;
 use core_foundation_sys::base::{CFRelease, CFTypeRef};
 use core_foundation_sys::string::CFStringRef;
-use crossbeam_channel::{Receiver, Sender, TrySendError};
+use crossbeam_channel::Receiver;
 
 use crate::desktop_capture::{CapturedFrame, CVPixelBufferRef};
 
@@ -124,17 +124,106 @@ type VTCompressionOutputCallback = extern "C" fn(
 pub struct EncodedFrame {
     pub data: Bytes,
     pub duration: Duration,
+    pub keyframe: bool,
+}
+
+/// A tiny real-time frame queue. When full it drops the oldest frame, so a newly produced
+/// keyframe can always replace stale P-frames instead of being discarded.
+pub struct FrameQueue {
+    inner: Mutex<FrameQueueInner>,
+    ready: tokio::sync::Notify,
+    capacity: usize,
+    dropped: AtomicU64,
+    force_keyframe: Arc<AtomicBool>,
+}
+
+struct FrameQueueInner {
+    frames: VecDeque<EncodedFrame>,
+    closed: bool,
+}
+
+impl FrameQueue {
+    pub fn new(capacity: usize, force_keyframe: Arc<AtomicBool>) -> Arc<Self> {
+        Arc::new(Self {
+            inner: Mutex::new(FrameQueueInner {
+                frames: VecDeque::new(),
+                closed: false,
+            }),
+            ready: tokio::sync::Notify::new(),
+            capacity: capacity.max(1),
+            dropped: AtomicU64::new(0),
+            force_keyframe,
+        })
+    }
+
+    fn push(&self, frame: EncodedFrame) {
+        let mut inner = self.inner.lock().unwrap();
+        if inner.closed {
+            return;
+        }
+        if inner.frames.len() >= self.capacity {
+            // Dropping arbitrary P-frames would break the H.264 reference chain and force the
+            // browser into a PLI/keyframe loop. Reset the GOP instead and wait for the encoder
+            // to produce a fresh keyframe.
+            inner.frames.clear();
+            self.dropped.fetch_add(1, Ordering::Relaxed);
+            self.force_keyframe.store(true, Ordering::Release);
+            if !frame.keyframe {
+                return;
+            }
+        }
+        inner.frames.push_back(frame);
+        self.ready.notify_one();
+    }
+
+    pub fn close(&self) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.closed = true;
+        self.ready.notify_waiters();
+    }
+}
+
+impl FrameQueue {
+    /// Async sender wait. It never blocks a Tokio worker thread, so the WebRTC driver can keep
+    /// draining RTP packets while the sender is idle between frames.
+    pub async fn wait_frame(&self, timeout: Duration) -> Option<EncodedFrame> {
+        loop {
+            {
+                let mut inner = self.inner.lock().unwrap();
+                if let Some(frame) = inner.frames.pop_front() {
+                    return Some(frame);
+                }
+                if inner.closed {
+                    return None;
+                }
+            }
+            let notified = self.ready.notified();
+            tokio::pin!(notified);
+            {
+                let mut inner = self.inner.lock().unwrap();
+                if let Some(frame) = inner.frames.pop_front() {
+                    return Some(frame);
+                }
+                if inner.closed {
+                    return None;
+                }
+            }
+            match tokio::time::timeout(timeout, notified).await {
+                Ok(()) => continue,
+                Err(_) => return None,
+            }
+        }
+    }
 }
 
 struct Shared {
     session: Mutex<VTCompressionSessionRef>,
-    output: Sender<EncodedFrame>,
+    output: Arc<FrameQueue>,
     last_pts: Mutex<f64>,
     force_keyframe: Arc<AtomicBool>,
     bitrate: AtomicU64,
     running: AtomicBool,
     errors: Mutex<VecDeque<String>>,
-    dropped: AtomicU64,
     fps: u32,
 }
 
@@ -237,7 +326,7 @@ fn avcc_to_annex_b(data: &[u8], sps_pps: Option<(Vec<u8>, Vec<u8>)>) -> (Vec<u8>
             keyframe = true;
         }
         let cached_sets = sps_pps.is_some();
-        if !(cached_sets && (kind == 7 || kind == 8)) && kind != 9 && kind != 12 {
+        if !(cached_sets && (kind == 7 || kind == 8)) && kind != 6 && kind != 9 && kind != 12 {
             output.extend_from_slice(&[0, 0, 0, 1]);
             output.extend_from_slice(nal);
         }
@@ -324,30 +413,38 @@ extern "C" fn output_callback(
     *last = pts_seconds;
     drop(last);
 
-    let _ = keyframe;
-    let frame = EncodedFrame {
+    shared.output.push(EncodedFrame {
         data: Bytes::from(data),
         duration,
-    };
-    match shared.output.try_send(frame) {
-        Ok(()) => {}
-        Err(TrySendError::Full(frame)) => {
-            // Real-time first: the queue is deliberately tiny, so dropping the new frame
-            // bounds latency to a few frame intervals instead of accumulating a backlog.
-            shared.dropped.fetch_add(1, Ordering::Relaxed);
-            drop(frame);
-        }
-        Err(TrySendError::Disconnected(_)) => {}
-    }
+        keyframe,
+    });
 }
 
 fn encode_loop(shared: Arc<Shared>, frames: Receiver<CapturedFrame>) {
+    let target_interval = Duration::from_secs_f64(1.0 / shared.fps.max(1) as f64);
+    let tolerance = target_interval.mul_f32(0.75);
+    let mut last_pts: Option<f64> = None;
+    let mut last_at = Instant::now() - target_interval;
     while shared.running.load(Ordering::Relaxed) {
         let frame = match frames.recv_timeout(Duration::from_millis(50)) {
             Ok(frame) => frame,
             Err(crossbeam_channel::RecvTimeoutError::Timeout) => continue,
             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
         };
+        // ScreenCaptureKit can deliver display-refresh frames even when the configured
+        // minimum interval is 1/fps. Encode at the target rate so P-frames are not dropped
+        // after encoding (which would break the H.264 reference chain).
+        let due = match (last_pts, frame.pts_seconds > 0.0) {
+            (Some(previous), true) if previous > 0.0 => {
+                frame.pts_seconds - previous >= tolerance.as_secs_f64()
+            }
+            _ => last_at.elapsed() >= tolerance,
+        };
+        if !due {
+            continue;
+        }
+        last_pts = Some(frame.pts_seconds);
+        last_at = Instant::now();
         let force = shared.force_keyframe.swap(false, Ordering::AcqRel);
         let frame_properties = if force {
             let key = unsafe { CFString::wrap_under_get_rule(kVTEncodeFrameOptionKey_ForceKeyFrame) };
@@ -401,7 +498,7 @@ impl Encoder {
         fps: u32,
         bitrate: u32,
         frames: Receiver<CapturedFrame>,
-        output: Sender<EncodedFrame>,
+        output: Arc<FrameQueue>,
         force_keyframe: Arc<AtomicBool>,
     ) -> Result<Self, String> {
         let shared = Arc::new(Shared {
@@ -412,7 +509,6 @@ impl Encoder {
             bitrate: AtomicU64::new(bitrate as u64),
             running: AtomicBool::new(true),
             errors: Mutex::new(VecDeque::new()),
-            dropped: AtomicU64::new(0),
             fps,
         });
         let mut session: VTCompressionSessionRef = std::ptr::null_mut();

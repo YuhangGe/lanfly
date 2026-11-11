@@ -118,7 +118,7 @@ npx lanfly --out ~/Downloads/lanfly
 2. 被控 Mac 需要在“系统设置 → 隐私与安全性 → 屏幕录制”中授权运行 lanfly 的终端或 Node 进程。若希望允许远程控制，还需授权 **辅助功能**。
 3. 控制端选择设备、画质，并勾选是否请求远程控制，然后点击 **请求远程桌面**。
 4. 被控端本机 WebUI 会弹出授权请求。查看屏幕和远程控制是两项独立权限：接受后默认只共享画面，只有被控端明确勾选 **允许对方远程控制鼠标和键盘** 才会开启控制。
-5. 接受后浏览器通过 `RTCPeerConnection` 接收 H.264 视频，绑定到 `HTMLVideoElement`；支持画面自适应和全屏。停止按钮会同时释放视频流、PeerConnection、数据通道和按键状态。
+5. 被控端点击 **接受** 后，控制端浏览器自动通过 `RTCPeerConnection` 接收 H.264 视频并绑定到 `HTMLVideoElement`，不需要再点一次“连接”；支持画面自适应和全屏。被控端未接受时不会启动屏幕采集，也不会建立媒体连接。停止按钮会同时释放视频流、PeerConnection、数据通道和按键状态。
 
 实现链路：macOS `ScreenCaptureKit` 持续采集主显示器 → `VideoToolbox` 硬件 H.264（Constrained Baseline，默认 30 FPS、4 Mbps、最高 1080p）→ Rust `webrtc-rs` 发送 RTP。SDP 和 ICE 只通过 lanfly 现有 Node.js 信令与设备身份通道转发；编码帧不会进入 JavaScript。远程键鼠事件通过已授权的 WebRTC DataChannel（DTLS 加密）直接发送到被控 Mac，由现有 Rust + Quartz 注入，不经过 Node.js 转发。
 

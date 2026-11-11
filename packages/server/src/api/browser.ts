@@ -17,7 +17,7 @@ import { z } from 'zod';
 import type { Application } from '../app';
 
 import { isActionFailure } from '../core/errors';
-import { HttpError, readBody, sendError, sendJson } from '../core/http';
+import { clientAddress, HttpError, readBody, sendError, sendJson } from '../core/http';
 
 const joinSchema = z.object({
   token: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
@@ -45,6 +45,12 @@ export async function handleBrowserRequest(
       const result = app.network.join(input.token, input.name);
       response.setHeader('set-cookie', result.cookie);
       sendJson(response, 200, { id: result.id });
+      return;
+    }
+    if (route === 'address' && request.method === 'GET') {
+      // Used only to replace Chrome's mDNS host candidate with the browser's real LAN address
+      // in the desktop signaling hint. It does not grant any access by itself.
+      sendJson(response, 200, { address: clientAddress(request) });
       return;
     }
     const id = app.network.authenticate(request);

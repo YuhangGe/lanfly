@@ -1120,6 +1120,7 @@ export default function App() {
           activePeerId={model.desktopPeerId || model.activePeerId}
           browserMode={browserMode}
           gatewayId={model.self.gatewayId}
+          localAddressHint={browserMode ? undefined : model.self.host}
           initialSessionId={model.desktopSessionId}
           onClose={() => {
             model.desktopOpen = false;

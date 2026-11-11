@@ -22,6 +22,7 @@ import {
 import { nextTick, onMount, ref, vm } from 'jinge';
 
 import { ActionError } from '../service/action';
+import { browserLocalAddress } from '../service/browser';
 import { onDesktopEvent } from '../service/desktop';
 import { DesktopControl } from '../service/desktop-input';
 import Button from './Button';
@@ -52,6 +53,18 @@ function phaseText(phase: UiPhase): string {
   }
 }
 
+function withLanAddress(
+  candidate: DesktopIceCandidate,
+  address: string,
+): DesktopIceCandidate | null {
+  if (!address || address === '.local') return null;
+  const parts = candidate.candidate.split(' ');
+  if (parts.length < 8 || !parts[4].endsWith('.local')) return null;
+  const direct = [...parts];
+  direct[4] = address;
+  return { ...candidate, candidate: direct.join(' ') };
+}
+
 function statusFromPhase(phase: DesktopPhase): UiPhase {
   if (phase === 'pending') return 'waiting';
   if (phase === 'accepted') return 'connecting';
@@ -67,6 +80,7 @@ export default function RemoteDesktopDialog(props: {
   activePeerId: string;
   browserMode: boolean;
   gatewayId?: string;
+  localAddressHint?: string;
   initialSessionId?: string;
   onClose: () => void;
 }) {
@@ -89,6 +103,7 @@ export default function RemoteDesktopDialog(props: {
     controlReady: false,
     width: 0,
     height: 0,
+    lanAddress: '',
   });
   const stage = ref<HTMLDivElement>();
   const video = ref<HTMLVideoElement>();
@@ -323,14 +338,14 @@ export default function RemoteDesktopDialog(props: {
           sdpMLineIndex: json.sdpMLineIndex,
           usernameFragment: json.usernameFragment,
         };
+        const direct = withLanAddress(candidate, model.lanAddress);
         if (!canSendCandidates) {
           pendingLocal.push(candidate);
+          if (direct) pendingLocal.push(direct);
           return;
         }
-        void desktopIce({
-          input: { sessionId: session.sessionId, candidate },
-          toastError: false,
-        }).catch(() => undefined);
+        void sendIceCandidate(session.sessionId, candidate);
+        if (direct) void sendIceCandidate(session.sessionId, direct);
       };
       peer.ontrack = (event) => {
         stream = event.streams[0] ?? new MediaStream([event.track]);
@@ -383,10 +398,7 @@ export default function RemoteDesktopDialog(props: {
         await peer.addIceCandidate(candidate).catch(() => undefined);
       }
       for (const candidate of pendingLocal.splice(0)) {
-        void desktopIce({
-          input: { sessionId: session.sessionId, candidate },
-          toastError: false,
-        }).catch(() => undefined);
+        void sendIceCandidate(session.sessionId, candidate);
       }
       model.width = result.width || model.width;
       model.height = result.height || model.height;
@@ -397,6 +409,17 @@ export default function RemoteDesktopDialog(props: {
       cleanupPeer();
     } finally {
       connecting = false;
+    }
+  }
+
+  async function sendIceCandidate(id: string, candidate: DesktopIceCandidate) {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const [error] = await desktopIce({
+        input: { sessionId: id, candidate },
+        toastError: false,
+      });
+      if (!error) return;
+      await new Promise((resolve) => setTimeout(resolve, 60));
     }
   }
 
@@ -582,6 +605,13 @@ export default function RemoteDesktopDialog(props: {
     document.addEventListener('fullscreenchange', fullscreen);
     window.addEventListener('pagehide', pagehide);
     unsubscribe = onDesktopEvent(handleEvent);
+    if (props.browserMode) {
+      void browserLocalAddress().then((address) => {
+        if (mounted) model.lanAddress = address;
+      });
+    } else {
+      model.lanAddress = props.localAddressHint ?? '';
+    }
     void loadState();
     if (!props.browserMode) {
       void refreshStatus();

@@ -393,6 +393,13 @@ describe('双实例集成', () => {
     expect(incoming.controlRequested).toBe(true);
     expect(incoming.control).toBe(false);
 
+    // A request alone must never start media or bypass the controlled-side confirmation.
+    const early = await rpc(a, 'desktopOffer', {
+      sessionId: incoming.sessionId,
+      sdp: 'v=0\r\no=- 0 0 IN IP4 0.0.0.0\r\ns=-\r\nt=0 0\r\n',
+    });
+    expect(early.error).toBe('DESKTOP_STATE');
+
     const rejected = await rpc(b, 'desktopReject', { sessionId: incoming.sessionId });
     expect(rejected.error).toBeUndefined();
     await waitFor('B 清除被拒绝的会话', async () => {

@@ -478,17 +478,7 @@ export class DesktopService {
         if (kind === 'ice') {
           const candidate = event.candidate;
           if (!candidate) continue;
-          await this.app.remote
-            .desktopIce(
-              this.#target(session),
-              {
-                sessionId: session.id,
-                from: this.app.identity.info,
-                candidate,
-              },
-              session.token!,
-            )
-            .catch((error) => logger.debug(`转发 ICE 失败：${String(error)}`));
+          await this.#forwardIce(session, candidate);
         } else if (kind === 'state') {
           const state = typeof event.state === 'string' ? event.state : '';
           if (state === 'connected') {
@@ -670,7 +660,9 @@ export class DesktopService {
               maxHeight: DESKTOP_MAX_HEIGHT,
               fps: DESKTOP_FPS,
               bitrate: session.bitrate,
-              localAddress: this.app.identity.host,
+              // Bind the wildcard so ICE can advertise every LAN interface, not just the
+              // discovery-selected primary IPv4 address.
+              localAddress: '0.0.0.0',
               control: session.control,
             }),
           ),
@@ -699,6 +691,25 @@ export class DesktopService {
       await this.#sendPeerError(session, code);
       this.#finish(session, 'failed', code, false);
       throwActionError(code);
+    }
+  }
+
+  async #forwardIce(session: Session, candidate: unknown): Promise<void> {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        await this.app.remote.desktopIce(
+          this.#target(session),
+          { sessionId: session.id, from: this.app.identity.info, candidate },
+          session.token!,
+        );
+        return;
+      } catch (error) {
+        if (attempt === 2) {
+          logger.debug(`转发 ICE 失败：${String(error)}`);
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 60));
+      }
     }
   }
 
