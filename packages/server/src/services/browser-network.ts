@@ -268,7 +268,12 @@ export class BrowserNetwork {
   reloadBrowsers(): number {
     let pages = 0;
     const payload = { at: Date.now() };
+    // Native peer hosts run their own WebUI and their own startup notification. A browser page
+    // opened from a known peer host must not refresh this host's UI; phones and local/hosted
+    // browser pages are still notified.
+    const peerHosts = new Set(this.app.peers.list().map((peer) => peer.host));
     for (const browser of this.browsers.values()) {
+      if (browser.host !== this.app.identity.host && peerHosts.has(browser.host)) continue;
       pages += browser.events.connections;
       browser.events.broadcast('reload', payload);
     }

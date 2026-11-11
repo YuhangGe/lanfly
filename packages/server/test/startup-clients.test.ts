@@ -60,12 +60,36 @@ describe('startup page refresh', () => {
       const events = new EventHub();
       const page = fakeResponse();
       events.add(page.response);
-      (app.network.browsers as unknown as Map<string, { events: EventHub }>).set('browser-1', {
-        events,
-      });
+      (app.network.browsers as unknown as Map<string, { events: EventHub; host: string }>).set(
+        'browser-1',
+        { events, host: app.identity.host },
+      );
       const result = await app.waitForStartupClients(50);
       expect(result.browserPages).toBe(1);
       expect(page.frames.some((frame) => frame.includes('event: reload'))).toBe(true);
+      events.stop();
+    } finally {
+      app.events.stop();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('does not refresh a browser page opened from another native peer host', async () => {
+    const { app, directory } = await newApp();
+    try {
+      app.peers.addManual(
+        { id: 'peer-1', name: 'Peer', port: 18088, version: '0.3.0', roomId: '123456' },
+        '192.168.1.50',
+      );
+      const events = new EventHub();
+      const page = fakeResponse();
+      events.add(page.response);
+      (app.network.browsers as unknown as Map<string, { events: EventHub; host: string }>).set(
+        'peer-page',
+        { events, host: '192.168.1.50' },
+      );
+      expect(app.network.reloadBrowsers()).toBe(0);
+      expect(page.frames.some((frame) => frame.includes('event: reload'))).toBe(false);
       events.stop();
     } finally {
       app.events.stop();
