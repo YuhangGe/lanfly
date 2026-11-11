@@ -50,7 +50,7 @@ export default function PeerList(props: {
               <span className="mt-0.5 block truncate text-[10.5px] text-neutral-80">
                 {peer.online
                   ? peer.kind === 'browser'
-                    ? '浏览器设备'
+                    ? peer.host
                     : `${peer.host}:${peer.port}`
                   : '离线'}
               </span>

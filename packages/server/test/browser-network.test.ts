@@ -146,6 +146,14 @@ async function listen(device: Device, onRequest?: (request: FileUploadRequest) =
 }
 
 describe('browser devices and one-hop routing', () => {
+  it('records the browser source address and exposes it as the device IP', async () => {
+    const a = await host('Host');
+    const browser = await join(a.app, 'Android 浏览器');
+    const peer = a.app.network.peers().find((item) => item.id === browser.id);
+    expect(peer?.host).toBe('127.0.0.1');
+    expect(peer?.port).toBe(a.app.identity.port);
+  });
+
   it('all six devices communicate independently; B never introduces C to A', async () => {
     const a = await host('A');
     const b = await host('B');

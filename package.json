@@ -1,7 +1,7 @@
 {
   "name": "lanfly",
   "version": "0.3.0",
-  "description": "A lightweight LAN messenger and file-transfer tool with automatic peer discovery.",
+  "description": "A lightweight all-in-one LAN toolkit: chat and file transfer with automatic peer discovery, Synergy-style keyboard/mouse sharing across Macs, and RustDesk-style remote desktop in the browser. No accounts, cloud, or central server.",
   "keywords": [
     "chat",
     "discovery",
@@ -60,8 +60,8 @@
     "typescript": "^7.0.2"
   },
   "optionalDependencies": {
-    "lanfly-input-darwin-arm64": "0.2.0",
-    "lanfly-input-darwin-x64": "0.2.0"
+    "lanfly-input-darwin-arm64": "0.3.0",
+    "lanfly-input-darwin-x64": "0.3.0"
   },
   "engines": {
     "node": ">=22"

@@ -34,6 +34,7 @@ import MessageItem from './components/MessageItem';
 import PeerList from './components/PeerList';
 import RemoteDesktopDialog from './components/RemoteDesktopDialog';
 import Toasts from './components/Toasts';
+import Tooltip from './components/Tooltip';
 import { ActionError } from './service/action';
 import { browserMode, browserName, eventPath, joinBrowser, renameBrowser } from './service/browser';
 import { DeferredFiles } from './service/deferred-files';
@@ -183,10 +184,20 @@ export default function App() {
     refreshActiveMessages();
   }
 
+  function visiblePeers(peers: PeerView[]): PeerView[] {
+    return peers.filter(
+      (peer) =>
+        peer.id !== model.self.id &&
+        // A browser page opened from this same host is a separate device on the server,
+        // but it is this machine and must not appear as a chat target in its own UI.
+        (browserMode || peer.host !== model.self.host || peer.port !== model.self.port),
+    );
+  }
+
   function applyState(state: AppState) {
     model.self = state.self;
-    model.peers = state.peers;
-    model.onlineCount = state.peers.filter((peer) => peer.online).length;
+    model.peers = visiblePeers(state.peers);
+    model.onlineCount = model.peers.filter((peer) => peer.online).length;
     model.messages = state.messages;
     model.transfers = Object.fromEntries(
       state.transfers.map((transfer) => [transfer.id, transfer]),
@@ -230,8 +241,8 @@ export default function App() {
   }
 
   function applyPeers(peers: PeerView[]) {
-    model.peers = peers;
-    model.onlineCount = peers.filter((peer) => peer.online).length;
+    model.peers = visiblePeers(peers);
+    model.onlineCount = model.peers.filter((peer) => peer.online).length;
     pruneUnread();
     syncActivePeer();
     updateTitle();
@@ -681,48 +692,45 @@ export default function App() {
       <header className="flex h-12 shrink-0 items-center gap-3 border-b border-neutral-40 bg-neutral-20/70 px-4">
         <div className="flex shrink-0 items-center gap-2">
           <span className="grid size-6 place-items-center rounded-[6px] bg-blue-30 text-white shadow-toolbar">
-            <span className="icon-[codicon--send] text-[13px]" aria-hidden="true" />
+            <img className="size-[13px]" src="/favicon.svg" />
           </span>
-          <strong className="text-[14px] tracking-[0.3px]">lanfly</strong>
+          <strong className="text-[14px] tracking-[0.3px]">LanFly</strong>
         </div>
         <span className="h-4 w-px bg-neutral-50" />
         {model.self.id && (
-          <div className="flex min-w-0 items-center gap-2 max-[760px]:hidden">
+          <div className="flex min-w-0 items-center gap-2">
             <Avatar name={model.self.name} id={model.self.id} size="sm" />
-            <span className="truncate text-[12px] text-neutral-100">{model.self.name}</span>
+            <button
+              className="truncate text-left text-[12px] text-neutral-100 disabled:cursor-default"
+              disabled={!browserMode}
+              on:click={() => {
+                model.renaming = true;
+                model.browserName = model.self.name;
+                model.joinError = '';
+                model.joinOpen = true;
+              }}
+            >
+              {model.self.name}
+            </button>
             <span
-              className="flex shrink-0 items-center gap-1 rounded-full border border-neutral-50 bg-neutral-30 px-1.5 py-0.5 text-[9.5px] text-neutral-80"
+              className="flex shrink-0 items-center gap-1 rounded-full border border-neutral-50 bg-neutral-30 px-1.5 py-0.5 text-[9.5px] text-neutral-80 max-[900px]:hidden"
               title="相同 Room ID 的主机才能连接；数据明文传输"
             >
               Room {model.self.roomId}
             </span>
+            <button
+              className="flex min-w-0 items-center gap-1 text-[10px] text-neutral-70 hover:text-neutral-90 max-[900px]:hidden"
+              title={`复制局域网地址：${model.self.host}:${model.self.port}`}
+              on:click={() => void copyAddress()}
+            >
+              <span className="truncate">
+                {model.self.host}:{model.self.port}
+              </span>
+              <span className="icon-[codicon--copy] shrink-0 text-[11px]" aria-hidden="true" />
+            </button>
           </div>
         )}
         <div className="ml-auto flex items-center gap-1.5">
-          <Button
-            size="compact"
-            variant="ghost"
-            title="远程桌面"
-            aria-label="远程桌面"
-            on:click={() => openDesktop()}
-          >
-            <span className="icon-[codicon--share-window] text-[14px] sm:mr-1" aria-hidden="true" />
-            <span className="max-[760px]:hidden">远程桌面</span>
-          </Button>
-          {!browserMode && (
-            <Button
-              size="compact"
-              variant="ghost"
-              title="键鼠共享"
-              aria-label="键鼠共享"
-              on:click={() => {
-                model.inputOpen = true;
-              }}
-            >
-              <span className="icon-[codicon--remote] text-[14px] sm:mr-1" aria-hidden="true" />
-              <span className="max-[760px]:hidden">键鼠共享</span>
-            </Button>
-          )}
           <span
             className={`flex items-center gap-1.5 rounded-full border px-2 py-1 text-[10px] ${
               model.connected
@@ -739,20 +747,29 @@ export default function App() {
             </span>
           </span>
           {!browserMode && (
-            <Button
-              size="compact"
-              variant="ghost"
-              className="text-neutral-90 hover:text-neutral-110"
-              title={`打开下载目录：${model.self.downloadsDir}`}
-              aria-label="打开下载目录"
-              on:click={() => void openDownloadsFolder()}
+            <Tooltip
+              align="end"
+              content={
+                model.self.downloadsDir
+                  ? `当前下载目录
+${model.self.downloadsDir}`
+                  : '当前下载目录尚未加载'
+              }
             >
-              <span
-                className="icon-[codicon--folder-opened] align-middle text-[13px] sm:mr-1"
-                aria-hidden="true"
-              />
-              <span className="max-[760px]:hidden">下载目录</span>
-            </Button>
+              <Button
+                size="compact"
+                variant="ghost"
+                className="text-neutral-90 hover:text-neutral-110"
+                aria-label={`打开下载目录：${model.self.downloadsDir || '尚未加载'}`}
+                on:click={() => void openDownloadsFolder()}
+              >
+                <span
+                  className="icon-[codicon--folder-opened] align-middle text-[13px] sm:mr-1"
+                  aria-hidden="true"
+                />
+                <span className="max-[760px]:hidden">下载目录</span>
+              </Button>
+            </Tooltip>
           )}
           {!browserMode && (
             <Button
@@ -784,52 +801,6 @@ export default function App() {
             model.activePeerId ? 'max-[760px]:hidden' : ''
           }`}
         >
-          <div className="border-b border-neutral-40 px-4 py-3.5">
-            <div className="flex items-center gap-2.5">
-              <Avatar name={model.self.name} id={model.self.id} size="md" online={true} />
-              <div className="min-w-0 flex-1">
-                <button
-                  className="truncate text-left text-[12.5px] font-semibold text-neutral-110"
-                  disabled={!browserMode}
-                  on:click={() => {
-                    model.renaming = true;
-                    model.browserName = model.self.name;
-                    model.joinError = '';
-                    model.joinOpen = true;
-                  }}
-                >
-                  {model.self.name}
-                </button>
-                <div className="mt-0.5 truncate text-[10.5px] text-neutral-80">
-                  {browserMode
-                    ? '浏览器设备 · 点击名称可修改'
-                    : `本机 · ${model.self.host}:${model.self.port}`}
-                </div>
-              </div>
-              <Button
-                size="icon"
-                className="shrink-0 text-neutral-80 hover:text-neutral-110"
-                title="复制局域网地址"
-                aria-label="复制局域网地址"
-                on:click={() => void copyAddress()}
-              >
-                <span className="icon-[codicon--copy] text-[13px]" aria-hidden="true" />
-              </Button>
-            </div>
-            {!browserMode && (
-              <div className="mt-2.5 flex items-center gap-1.5 text-[10px] text-neutral-70">
-                <span className="icon-[codicon--cloud-download] text-[11px]" aria-hidden="true" />
-                <button
-                  className="min-w-0 cursor-pointer truncate text-left hover:text-neutral-90"
-                  title={model.self.downloadsDir}
-                  on:click={() => void openDownloadsFolder()}
-                >
-                  {model.self.downloadsDir || '下载目录'}
-                </button>
-              </div>
-            )}
-          </div>
-
           <div className="flex items-center justify-between px-4 pt-3 pb-1.5">
             <span className="text-[10px] font-semibold tracking-[0.12em] text-neutral-70 uppercase">
               局域网设备
@@ -973,7 +944,9 @@ export default function App() {
                     <span>
                       {model.activePeer.online ? '在线' : '离线'}
                       <span className="mx-1 text-neutral-60">·</span>
-                      {model.activePeer.host}:{model.activePeer.port}
+                      {model.activePeer.kind === 'browser'
+                        ? model.activePeer.host
+                        : `${model.activePeer.host}:${model.activePeer.port}`}
                     </span>
                   </div>
                 </div>
@@ -995,22 +968,27 @@ export default function App() {
                       <span className="max-[760px]:hidden">远程桌面</span>
                     </Button>
                   )}
-                {!browserMode && (
-                  <Button
-                    size="compact"
-                    variant="ghost"
-                    className="shrink-0 text-neutral-80 hover:text-neutral-110"
-                    title={model.self.downloadsDir}
-                    aria-label="打开下载目录"
-                    on:click={() => void openDownloadsFolder()}
-                  >
-                    <span
-                      className="icon-[codicon--folder-opened] align-middle text-[13px] sm:mr-1"
-                      aria-hidden="true"
-                    />
-                    <span className="max-[760px]:hidden">下载目录</span>
-                  </Button>
-                )}
+                {!browserMode &&
+                  model.activePeer.kind !== 'browser' &&
+                  model.activePeer.online &&
+                  model.activePeer.id !== model.self.gatewayId && (
+                    <Button
+                      size="compact"
+                      variant="ghost"
+                      className="shrink-0 text-neutral-80 hover:text-neutral-110"
+                      title={`键鼠共享：${model.activePeer.name}`}
+                      aria-label="键鼠共享"
+                      on:click={() => {
+                        model.inputOpen = true;
+                      }}
+                    >
+                      <span
+                        className="icon-[codicon--remote] align-middle text-[13px] sm:mr-1"
+                        aria-hidden="true"
+                      />
+                      <span className="max-[760px]:hidden">键鼠共享</span>
+                    </Button>
+                  )}
               </div>
 
               <div ref={chatScroll} className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
@@ -1035,6 +1013,9 @@ export default function App() {
                       message={message}
                       onRetry={(id) => void retry(id)}
                       onCancel={(id) => void cancel(id)}
+                      onCopied={(copied) =>
+                        pushToast(copied ? '已复制消息' : '复制失败', copied ? 'success' : 'error')
+                      }
                     />
                   ))}
                   <div className="h-1" />
@@ -1048,6 +1029,7 @@ export default function App() {
                       ref={fileInput}
                       type="file"
                       multiple
+                      accept="*/*"
                       className="hidden"
                       on:change={pickFiles}
                     />

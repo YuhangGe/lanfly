@@ -42,7 +42,7 @@ export async function handleBrowserRequest(
       const input = joinSchema.parse(
         JSON.parse((await readBody(request, JSON_BODY_LIMIT)).toString('utf8')),
       );
-      const result = app.network.join(input.token, input.name);
+      const result = app.network.join(input.token, input.name, clientAddress(request));
       response.setHeader('set-cookie', result.cookie);
       sendJson(response, 200, { id: result.id });
       return;

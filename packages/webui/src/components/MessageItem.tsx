@@ -71,25 +71,102 @@ function transferLabel(transfer: TransferView | undefined): string {
   }
 }
 
+async function writeClipboard(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // LAN pages are often not a secure context; fall through to execCommand.
+  }
+  try {
+    const area = document.createElement('textarea');
+    area.value = text;
+    area.setAttribute('readonly', '');
+    area.style.position = 'fixed';
+    area.style.opacity = '0';
+    document.body.appendChild(area);
+    area.select();
+    area.setSelectionRange(0, text.length);
+    const copied = document.execCommand('copy');
+    area.remove();
+    return copied;
+  } catch {
+    return false;
+  }
+}
+
 export default function MessageItem(props: {
   message: UiMessage;
   onRetry: (messageId: string) => void;
   onCancel: (transferId: string) => void;
+  onCopied?: (copied: boolean) => void;
 }) {
+  const copyable = props.message.kind === 'text' && Boolean(props.message.text);
+  let pressTimer: number | undefined;
+  let pressStartX = 0;
+  let pressStartY = 0;
+  let pressMoved = false;
+
+  function clearPress() {
+    if (pressTimer !== undefined) {
+      window.clearTimeout(pressTimer);
+      pressTimer = undefined;
+    }
+  }
+
+  async function copyMessage() {
+    if (!copyable || !props.message.text) return;
+    props.onCopied?.(await writeClipboard(props.message.text));
+  }
+
+  function pressStart(event: PointerEvent) {
+    if (!copyable || event.pointerType !== 'touch') return;
+    clearPress();
+    pressMoved = false;
+    pressStartX = event.clientX;
+    pressStartY = event.clientY;
+    pressTimer = window.setTimeout(() => {
+      pressTimer = undefined;
+      if (!pressMoved) void copyMessage();
+    }, 520);
+  }
+
+  function pressMove(event: PointerEvent) {
+    if (pressTimer === undefined) return;
+    if (Math.hypot(event.clientX - pressStartX, event.clientY - pressStartY) > 8) {
+      pressMoved = true;
+      clearPress();
+    }
+  }
+
+  function pressEnd() {
+    clearPress();
+  }
+
   return (
     <div
       className={`message-enter flex w-full ${props.message.direction === 'out' ? 'justify-end' : 'justify-start'}`}
       data-message-id={props.message.id}
     >
       <div
-        className={`flex max-w-[min(78%,600px)] min-w-0 flex-col ${props.message.direction === 'out' ? 'items-end' : 'items-start'}`}
+        className={`group relative flex max-w-[min(78%,600px)] min-w-0 flex-col ${props.message.direction === 'out' ? 'items-end' : 'items-start'}`}
       >
         <div
-          className={`min-w-0 rounded-[11px] px-3 py-2 text-[13px] leading-[1.55] shadow-bubble ${
+          className={`relative min-w-0 rounded-[11px] px-3 py-2 text-[13px] leading-[1.55] shadow-bubble max-[760px]:select-none max-[760px]:[-webkit-touch-callout:none] ${
             props.message.direction === 'out'
               ? 'rounded-tr-[4px] bg-blue-30 text-white'
               : 'rounded-tl-[4px] border border-neutral-60 bg-neutral-50 text-neutral-110'
           }`}
+          on:pointerDown={pressStart}
+          on:pointerMove={pressMove}
+          on:pointerUp={pressEnd}
+          on:pointerCancel={pressEnd}
+          on:pointerLeave={pressEnd}
+          on:contextMenu={(event: MouseEvent) => {
+            if (copyable && window.matchMedia('(pointer: coarse)').matches) event.preventDefault();
+          }}
         >
           {props.message.kind === 'text' ? (
             <p className="m-0 break-words whitespace-pre-wrap">{props.message.text}</p>
@@ -189,6 +266,22 @@ export default function MessageItem(props: {
             </div>
           )}
         </div>
+        {copyable && (
+          <Button
+            size="bare"
+            className={`absolute top-1 z-10 grid size-6 place-items-center rounded-[6px] border border-neutral-60 bg-neutral-30 text-neutral-90 opacity-0 shadow-toolbar transition-opacity duration-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100 max-[760px]:hidden ${
+              props.message.direction === 'out' ? 'right-full mr-1' : 'left-full ml-1'
+            }`}
+            title="复制消息"
+            aria-label="复制消息"
+            on:click={(event) => {
+              event.stopPropagation();
+              void copyMessage();
+            }}
+          >
+            <span className="icon-[codicon--copy] text-[13px]" aria-hidden="true" />
+          </Button>
+        )}
         <div
           className={`mt-1 flex items-center gap-1.5 text-[10.5px] text-neutral-80 ${props.message.direction === 'out' ? 'pr-0.5' : 'pl-0.5'}`}
         >

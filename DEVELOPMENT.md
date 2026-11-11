@@ -119,9 +119,21 @@ pnpm test          # 单元 + 双实例集成测试
 ## 原生包与发布
 
 - 正式包按平台/架构使用可选的预编译包：`lanfly-input-darwin-arm64` / `lanfly-input-darwin-x64`。
-- GitHub Actions 对两个 macOS 架构编译、检查并测试原生模块。
-- JS/WebUI 检查通过后，发布事件依次发布两个原生包和主包；需要为三个包配置 npm trusted publishing。
-- 发布新版本前运行 `npm version patch`（或指定版本），版本钩子会同步平台包、Cargo 和锁文件中的版本。
+- `.github/workflows/ci.yml` **只支持手动触发**（`workflow_dispatch`），不会在 push 或 PR 后自动发布。
+- 手动触发后依次执行：
+  1. `verify`：安装、lint、构建、测试；
+  2. `native` matrix：两个 macOS 架构分别编译、测试、smoke test，并直接发布对应的 platform 包；
+  3. `publish`：等待所有 platform 包完成后，构建并发布根包 `lanfly`。
+- 两个 platform 包和主包都使用 npm trusted publishing，需要在 npm 上为三个包配置 trusted publisher。
+- 已存在的版本会被跳过，重复运行是安全的。
+- `.github/workflows/test.yml` 在 push / PR 时运行 lint、构建和测试，不发布。
+- 发布新版本前运行 `npm version patch`（或指定版本）。`version` 钩子会同步：
+  - `platform/*/package.json` 版本；
+  - 根包 `optionalDependencies`；
+  - `native/Cargo.toml` 和 `native/Cargo.lock`；
+  - `pnpm-lock.yaml` 中的 platform specifier；
+  - `pnpm-workspace.yaml` 的 `minimumReleaseAgeExclude`；
+  - 并把修改加入 `npm version` 的提交。
 - 当前仓库版本若已经发布，需要先递增版本再发布包含新功能的主包。
 
 ## 测试

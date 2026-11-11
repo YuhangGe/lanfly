@@ -27,3 +27,5 @@ minimumReleaseAgeExclude:
   - '@rolldown/binding-win32-x64-msvc@1.2.18'
   - rolldown@1.2.18
   - vite@8.3.7
+  - lanfly-input-darwin-arm64@0.3.0
+  - lanfly-input-darwin-x64@0.3.0

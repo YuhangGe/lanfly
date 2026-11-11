@@ -21,7 +21,7 @@ import { z } from 'zod';
 import type { Application } from '../app';
 
 import { throwActionError } from '../core/errors';
-import { HttpError, sendJson } from '../core/http';
+import { clientAddress, HttpError, sendJson } from '../core/http';
 import { randomToken, safeTokenEquals, sha256 } from '../core/security';
 import { logger } from '../logger';
 import { DownloadRelay } from './download-relay';
@@ -53,7 +53,7 @@ const deliverySchema = z.object({
 type Delivery = z.infer<typeof deliverySchema>;
 type BrowserAnnouncement = z.infer<typeof browserSchema>;
 type Inbox = { events: EventHub; messages: MessageStore; transfers: TransferStore };
-type Browser = Inbox & { info: PeerInfo; lastSeen: number; connections: number };
+type Browser = Inbox & { info: PeerInfo; host: string; lastSeen: number; connections: number };
 type IncomingFile = {
   destination: string;
   sender: string;
@@ -138,7 +138,7 @@ export class BrowserNetwork {
     return createHmac('sha256', this.#key).update(token).digest('base64url');
   }
 
-  join(token: string, name: string): { id: string; cookie: string } {
+  join(token: string, name: string, host: string): { id: string; cookie: string } {
     const id = `web-${sha256(token).toString('hex').slice(0, 40)}`;
     let browser = this.browsers.get(id);
     if (!browser) {
@@ -149,12 +149,14 @@ export class BrowserNetwork {
         messages: new MessageStore(events),
         transfers: new TransferStore(events),
         info: this.#info(id, name),
+        host,
         lastSeen: Date.now(),
         connections: 0,
       };
       this.browsers.set(id, browser);
     }
     browser.info.name = name;
+    browser.host = host;
     browser.lastSeen = Date.now();
     this.publishPeers();
     this.#track(this.sync());
@@ -176,6 +178,7 @@ export class BrowserNetwork {
     const id = `web-${sha256(token).toString('hex').slice(0, 40)}`;
     const browser = this.browsers.get(id);
     if (!browser) throw new HttpError(401, 'BROWSER_SESSION_REQUIRED');
+    browser.host = clientAddress(request);
     browser.lastSeen = Date.now();
     return id;
   }
@@ -226,7 +229,7 @@ export class BrowserNetwork {
     const native = this.app.peers.list();
     const local = [...this.browsers.values()].map((b) => ({
       ...b.info,
-      host: this.app.identity.host,
+      host: b.host,
       online: this.#online(b),
       lastSeen: b.lastSeen,
       manual: false,
