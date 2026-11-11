@@ -1,0 +1,6 @@
+#!/usr/bin/env sh
+set -e
+
+pnpm exec lint-staged
+cargo fmt --manifest-path native/Cargo.toml -- --check
+cargo clippy --manifest-path native/Cargo.toml --locked --all-targets -- -D warnings

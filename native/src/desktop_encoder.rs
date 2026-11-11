@@ -17,7 +17,7 @@ use core_foundation_sys::base::{CFRelease, CFTypeRef};
 use core_foundation_sys::string::CFStringRef;
 use crossbeam_channel::Receiver;
 
-use crate::desktop_capture::{CapturedFrame, CVPixelBufferRef};
+use crate::desktop_capture::{CVPixelBufferRef, CapturedFrame};
 
 type OSStatus = i32;
 type VTCompressionSessionRef = *mut c_void;
@@ -255,7 +255,11 @@ fn set_bool_property(session: VTCompressionSessionRef, key: CFStringRef, value: 
     set_property(session, key, boolean.as_CFTypeRef())
 }
 
-fn set_string_property(session: VTCompressionSessionRef, key: CFStringRef, value: CFString) -> bool {
+fn set_string_property(
+    session: VTCompressionSessionRef,
+    key: CFStringRef,
+    value: CFString,
+) -> bool {
     set_property(session, key, value.as_CFTypeRef())
 }
 
@@ -332,16 +336,14 @@ fn avcc_to_annex_b(data: &[u8], sps_pps: Option<(Vec<u8>, Vec<u8>)>) -> (Vec<u8>
         }
         offset += length;
     }
-    if keyframe {
-        if let Some((sps, pps)) = sps_pps {
-            let mut with_sets = Vec::with_capacity(output.len() + sps.len() + pps.len() + 8);
-            with_sets.extend_from_slice(&[0, 0, 0, 1]);
-            with_sets.extend_from_slice(&sps);
-            with_sets.extend_from_slice(&[0, 0, 0, 1]);
-            with_sets.extend_from_slice(&pps);
-            with_sets.extend_from_slice(&output);
-            return (with_sets, true);
-        }
+    if keyframe && let Some((sps, pps)) = sps_pps {
+        let mut with_sets = Vec::with_capacity(output.len() + sps.len() + pps.len() + 8);
+        with_sets.extend_from_slice(&[0, 0, 0, 1]);
+        with_sets.extend_from_slice(&sps);
+        with_sets.extend_from_slice(&[0, 0, 0, 1]);
+        with_sets.extend_from_slice(&pps);
+        with_sets.extend_from_slice(&output);
+        return (with_sets, true);
     }
     (output, keyframe)
 }
@@ -383,7 +385,8 @@ extern "C" fn output_callback(
         return;
     }
     let mut avcc = vec![0_u8; length];
-    if unsafe { CMBlockBufferCopyDataBytes(block, 0, length, avcc.as_mut_ptr() as *mut c_void) } != 0
+    if unsafe { CMBlockBufferCopyDataBytes(block, 0, length, avcc.as_mut_ptr() as *mut c_void) }
+        != 0
     {
         push_error(shared, "DESKTOP_ENCODE_COPY_FAILED");
         return;
@@ -447,7 +450,8 @@ fn encode_loop(shared: Arc<Shared>, frames: Receiver<CapturedFrame>) {
         last_at = Instant::now();
         let force = shared.force_keyframe.swap(false, Ordering::AcqRel);
         let frame_properties = if force {
-            let key = unsafe { CFString::wrap_under_get_rule(kVTEncodeFrameOptionKey_ForceKeyFrame) };
+            let key =
+                unsafe { CFString::wrap_under_get_rule(kVTEncodeFrameOptionKey_ForceKeyFrame) };
             let value = CFBoolean::true_value().as_CFType();
             Some(CFDictionary::from_CFType_pairs(&[(key, value)]))
         } else {
@@ -533,11 +537,7 @@ impl Encoder {
         let profile = unsafe {
             CFString::wrap_under_get_rule(kVTProfileLevel_H264_ConstrainedBaseline_AutoLevel)
         };
-        set_bool_property(
-            session,
-            unsafe { kVTCompressionPropertyKey_RealTime },
-            true,
-        );
+        set_bool_property(session, unsafe { kVTCompressionPropertyKey_RealTime }, true);
         set_string_property(
             session,
             unsafe { kVTCompressionPropertyKey_ProfileLevel },

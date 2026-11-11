@@ -1,6 +1,6 @@
 //! ScreenCaptureKit capture handle. Frames stay as CVPixelBuffer / IOSurface backed
 //! buffers all the way to VideoToolbox; nothing crosses the Neon boundary.
-use std::ffi::{c_char, c_void, CStr};
+use std::ffi::{CStr, c_char, c_void};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 

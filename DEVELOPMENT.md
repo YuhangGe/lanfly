@@ -128,6 +128,16 @@ pnpm test          # 单元 + 双实例集成测试
 
 键鼠和远程桌面实现位于 `native/`（Rust/Neon/Quartz/ScreenCaptureKit/VideoToolbox/webrtc-rs）以及 `packages/server/src/input/`、`packages/server/src/desktop/`。本地开发需要先运行 `pnpm build:native` 生成 `native/index.node`；`pnpm build` 只构建 JS 和 WebUI，不要求其它系统安装 Rust。
 
+## Git hooks
+
+`pnpm install` 会执行 `prepare` 安装 husky。提交前 `.husky/pre-commit` 会依次执行：
+
+1. `lint-staged`：对暂存的 TS/TSX 运行 `oxlint --type-aware --fix` 和 `oxfmt`，对 JS/JSON/Markdown/YAML 运行 `oxfmt`；
+2. `cargo fmt --manifest-path native/Cargo.toml -- --check`；
+3. `cargo clippy --manifest-path native/Cargo.toml --locked --all-targets -- -D warnings`。
+
+任一步失败都会阻止提交。CI 中设置 `HUSKY=0`，不会安装或执行本地 hook。
+
 ## 原生包与发布
 
 - 正式包按平台/架构使用可选的预编译包：`lanfly-input-darwin-arm64` / `lanfly-input-darwin-x64`。

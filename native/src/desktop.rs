@@ -13,23 +13,22 @@ use async_trait::async_trait;
 use rtc::interceptor::{Interceptor, Registry, Slot};
 use rtc::media::Sample;
 use rtc::media_stream::MediaStreamTrack;
-use rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors;
-use rtc::peer_connection::configuration::media_engine::{MediaEngine, MIME_TYPE_H264};
-use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
+use rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors;
+use rtc::peer_connection::configuration::media_engine::{MIME_TYPE_H264, MediaEngine};
+use rtc::peer_connection::configuration::setting_engine::SettingEngineBuilder;
 use rtc::peer_connection::sdp::RTCSessionDescription;
-use rtc::peer_connection::transport::RTCIceCandidateInit;
 use rtc::peer_connection::transport::RTCDtlsRole;
+use rtc::peer_connection::transport::RTCIceCandidateInit;
 use rtc::rtcp::payload_feedbacks::full_intra_request::FullIntraRequest;
 use rtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
+use rtc::rtp_transceiver::PayloadType;
 use rtc::rtp_transceiver::rtp_sender::{
     RTCPFeedback, RTCRtpCodec, RTCRtpCodecParameters, RTCRtpCodingParameters,
     RTCRtpEncodingParameters, RtpCodecKind,
 };
-use rtc::rtp_transceiver::PayloadType;
-use webrtc::runtime::Runtime;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use webrtc::data_channel::{DataChannel, DataChannelEvent};
 use webrtc::media_stream::track_local::static_sample::TrackLocalStaticSample;
 use webrtc::media_stream::track_local::{TrackLocal, TrackLocalEvent};
@@ -38,6 +37,7 @@ use webrtc::peer_connection::{
     RTCPeerConnectionIceEvent, RTCPeerConnectionState,
 };
 use webrtc::rtp_transceiver::RtpSender;
+use webrtc::runtime::Runtime;
 use webrtc::runtime::TokioRuntime;
 
 use crate::desktop_capture::{self, Capture, CapturedFrame};
@@ -103,10 +103,10 @@ struct DesktopHandler {
 #[async_trait]
 impl PeerConnectionEventHandler for DesktopHandler {
     async fn on_ice_candidate(&self, event: RTCPeerConnectionIceEvent) {
-        if let Ok(candidate) = event.candidate.to_json() {
-            if let Ok(value) = serde_json::to_value(candidate) {
-                push_event(&self.events, json!({"kind": "ice", "candidate": value}));
-            }
+        if let Ok(candidate) = event.candidate.to_json()
+            && let Ok(value) = serde_json::to_value(candidate)
+        {
+            push_event(&self.events, json!({"kind": "ice", "candidate": value}));
         }
     }
 
@@ -175,11 +175,9 @@ impl KeyframeFeedback {
     }
 }
 
-impl sansio::Protocol<
-    rtc::interceptor::TaggedPacket,
-    rtc::interceptor::TaggedPacket,
-    (),
-> for KeyframeFeedback {
+impl sansio::Protocol<rtc::interceptor::TaggedPacket, rtc::interceptor::TaggedPacket, ()>
+    for KeyframeFeedback
+{
     type Rout = rtc::interceptor::TaggedPacket;
     type Wout = rtc::interceptor::TaggedPacket;
     type Eout = ();
@@ -192,7 +190,10 @@ impl sansio::Protocol<
     ) -> Result<(), Self::Error> {
         if let rtc::interceptor::Packet::Rtcp(packets) = &message.message.packet {
             let wants_keyframe = packets.iter().any(|packet| {
-                packet.as_any().downcast_ref::<PictureLossIndication>().is_some()
+                packet
+                    .as_any()
+                    .downcast_ref::<PictureLossIndication>()
+                    .is_some()
                     || packet.as_any().downcast_ref::<FullIntraRequest>().is_some()
             });
             if wants_keyframe {
@@ -209,10 +210,7 @@ impl sansio::Protocol<
         self.read.pop_front()
     }
 
-    fn handle_write(
-        &mut self,
-        message: rtc::interceptor::TaggedPacket,
-    ) -> Result<(), Self::Error> {
+    fn handle_write(&mut self, message: rtc::interceptor::TaggedPacket) -> Result<(), Self::Error> {
         self.write.push_back(message);
         Ok(())
     }
@@ -302,16 +300,15 @@ impl Session {
     fn add_ice(&self, candidate: &str) -> Result<(), String> {
         let candidate: RTCIceCandidateInit =
             serde_json::from_str(candidate).map_err(|_| "DESKTOP_ICE_INVALID".to_owned())?;
-        self.runtime
-            .block_on(async {
-                let guard = self.pc.lock().await;
-                let pc = guard
-                    .as_ref()
-                    .ok_or_else(|| "DESKTOP_SESSION_CLOSED".to_owned())?;
-                pc.add_ice_candidate(candidate)
-                    .await
-                    .map_err(|error| format!("DESKTOP_ICE_FAILED: {error}"))
-            })?;
+        self.runtime.block_on(async {
+            let guard = self.pc.lock().await;
+            let pc = guard
+                .as_ref()
+                .ok_or_else(|| "DESKTOP_SESSION_CLOSED".to_owned())?;
+            pc.add_ice_candidate(candidate)
+                .await
+                .map_err(|error| format!("DESKTOP_ICE_FAILED: {error}"))
+        })?;
         Ok(())
     }
 
@@ -328,13 +325,16 @@ impl Session {
         self.runtime.spawn(Box::pin(async move {
             while feedback_running.load(Ordering::Acquire) {
                 match feedback_track.poll().await {
-                    Some(TrackLocalEvent::OnRtcpPacket(packets)) => {
+                    Some(TrackLocalEvent::OnRtcpPacket(packets))
                         if packets.iter().any(|packet| {
-                            packet.as_any().downcast_ref::<PictureLossIndication>().is_some()
+                            packet
+                                .as_any()
+                                .downcast_ref::<PictureLossIndication>()
+                                .is_some()
                                 || packet.as_any().downcast_ref::<FullIntraRequest>().is_some()
-                        }) {
-                            feedback_keyframe.store(true, Ordering::Release);
-                        }
+                        }) =>
+                    {
+                        feedback_keyframe.store(true, Ordering::Release);
                     }
                     None => break,
                     _ => {}
@@ -392,19 +392,17 @@ impl Session {
                 values.push(value);
             }
         }
-        if let Ok(capture) = self.capture.lock() {
-            if let Some(capture) = capture.as_ref() {
-                if let Some(error) = capture.take_error() {
-                    values.push(json!({"kind": "error", "message": error}));
-                }
-            }
+        if let Ok(capture) = self.capture.lock()
+            && let Some(capture) = capture.as_ref()
+            && let Some(error) = capture.take_error()
+        {
+            values.push(json!({"kind": "error", "message": error}));
         }
-        if let Ok(encoder) = self.encoder.lock() {
-            if let Some(encoder) = encoder.as_ref() {
-                if let Some(error) = encoder.take_error() {
-                    values.push(json!({"kind": "error", "message": error}));
-                }
-            }
+        if let Ok(encoder) = self.encoder.lock()
+            && let Some(encoder) = encoder.as_ref()
+            && let Some(error) = encoder.take_error()
+        {
+            values.push(json!({"kind": "error", "message": error}));
         }
         Value::Array(values)
     }
@@ -412,12 +410,11 @@ impl Session {
     fn set_bitrate(&self, bitrate: u32) -> Result<(), String> {
         let bitrate = bitrate.clamp(256_000, 32_000_000);
         self.bitrate.store(bitrate as u64, Ordering::Relaxed);
-        if let Ok(encoder) = self.encoder.lock() {
-            if let Some(encoder) = encoder.as_ref() {
-                if !encoder.set_bitrate(bitrate) {
-                    return Err("DESKTOP_BITRATE_FAILED".to_owned());
-                }
-            }
+        if let Ok(encoder) = self.encoder.lock()
+            && let Some(encoder) = encoder.as_ref()
+            && !encoder.set_bitrate(bitrate)
+        {
+            return Err("DESKTOP_BITRATE_FAILED".to_owned());
         }
         Ok(())
     }
@@ -432,15 +429,15 @@ impl Session {
         }
         self.running.store(false, Ordering::Release);
         self.encoded_queue.close();
-        if let Ok(mut capture) = self.capture.lock() {
-            if let Some(mut capture) = capture.take() {
-                capture.stop();
-            }
+        if let Ok(mut capture) = self.capture.lock()
+            && let Some(mut capture) = capture.take()
+        {
+            capture.stop();
         }
-        if let Ok(mut encoder) = self.encoder.lock() {
-            if let Some(mut encoder) = encoder.take() {
-                encoder.stop();
-            }
+        if let Ok(mut encoder) = self.encoder.lock()
+            && let Some(mut encoder) = encoder.take()
+        {
+            encoder.stop();
         }
         desktop_input::reset();
         let pc = self.runtime.block_on(async { self.pc.lock().await.take() });
@@ -457,11 +454,7 @@ struct DesktopState {
 static SERVICE: OnceLock<Mutex<DesktopState>> = OnceLock::new();
 
 fn service() -> &'static Mutex<DesktopState> {
-    SERVICE.get_or_init(|| {
-        Mutex::new(DesktopState {
-            session: None,
-        })
-    })
+    SERVICE.get_or_init(|| Mutex::new(DesktopState { session: None }))
 }
 
 fn take_session(id: Option<&str>) -> Option<Arc<Session>> {
@@ -471,11 +464,7 @@ fn take_session(id: Option<&str>) -> Option<Arc<Session>> {
         .as_ref()
         .map(|session| id.is_none() || id == Some(session.id.as_str()))
         .unwrap_or(false);
-    if matches {
-        state.session.take()
-    } else {
-        None
-    }
+    if matches { state.session.take() } else { None }
 }
 
 fn now_unix_ms() -> u64 {
@@ -563,20 +552,19 @@ fn h264_codec() -> RTCRtpCodecParameters {
     }
 }
 
+type PeerParts = (
+    Box<dyn PeerConnection>,
+    Arc<TrackLocalStaticSample>,
+    Arc<dyn RtpSender>,
+    u32,
+);
+
 fn build_peer(
     runtime: &tokio::runtime::Runtime,
     handler: Arc<DesktopHandler>,
     local_address: Option<&str>,
     session_id: &str,
-) -> Result<
-    (
-        Box<dyn PeerConnection>,
-        Arc<TrackLocalStaticSample>,
-        Arc<dyn RtpSender>,
-        u32,
-    ),
-    String,
-> {
+) -> Result<PeerParts, String> {
     let track_ssrc = new_ssrc();
     let codec = h264_codec();
     let mut media = MediaEngine::default();
@@ -655,10 +643,12 @@ pub fn status() -> Value {
             "originY": display.origin_y,
         })
     });
-    let session = service()
-        .lock()
-        .ok()
-        .and_then(|state| state.session.as_ref().map(|session| (session.width, session.height, session.id.clone())));
+    let session = service().lock().ok().and_then(|state| {
+        state
+            .session
+            .as_ref()
+            .map(|session| (session.width, session.height, session.id.clone()))
+    });
     json!({
         "supported": cfg!(target_os = "macos"),
         "available": true,
@@ -694,12 +684,7 @@ pub fn start(session_id: &str, config_json: &str) -> Result<Value, String> {
     }
 
     let (capture_tx, capture_rx) = crossbeam_channel::bounded::<CapturedFrame>(2);
-    let mut capture = Capture::start(
-        config.max_width,
-        config.max_height,
-        config.fps,
-        capture_tx,
-    )?;
+    let mut capture = Capture::start(config.max_width, config.max_height, config.fps, capture_tx)?;
     let force_keyframe = Arc::new(AtomicBool::new(true));
     let encoded_queue = FrameQueue::new(3, force_keyframe.clone());
     let mut encoder = match Encoder::start(
@@ -868,7 +853,12 @@ mod tests {
     #[test]
     fn h264_codec_advertises_constrained_baseline_and_pli() {
         let codec = h264_codec();
-        assert!(codec.rtp_codec.sdp_fmtp_line.contains("profile-level-id=42e028"));
+        assert!(
+            codec
+                .rtp_codec
+                .sdp_fmtp_line
+                .contains("profile-level-id=42e028")
+        );
         assert!(
             codec
                 .rtp_codec
@@ -880,29 +870,24 @@ mod tests {
 
     #[test]
     fn answer_advertises_the_level_videotoolbox_emits() {
-        let sdp = "a=fmtp:108 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f\r\n";
-        assert!(advertise_h264_level(sdp, 1920, 1080, 4_000_000).contains("profile-level-id=42e028"));
+        let sdp =
+            "a=fmtp:108 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f\r\n";
         assert!(
-            advertise_h264_level(sdp, 2940, 1912, 16_000_000)
-                .contains("profile-level-id=42e032")
+            advertise_h264_level(sdp, 1920, 1080, 4_000_000).contains("profile-level-id=42e028")
         );
         assert!(
-            advertise_h264_level(sdp, 3840, 2160, 32_000_000)
-                .contains("profile-level-id=42e033")
+            advertise_h264_level(sdp, 2940, 1912, 16_000_000).contains("profile-level-id=42e032")
+        );
+        assert!(
+            advertise_h264_level(sdp, 3840, 2160, 32_000_000).contains("profile-level-id=42e033")
         );
         assert!(advertise_h264_level("no fmtp here", 1920, 1080, 4_000_000).eq("no fmtp here"));
     }
 
     #[test]
     fn local_socket_address_is_lan_safe() {
-        assert_eq!(
-            local_socket_address(Some("192.168.1.7")),
-            "192.168.1.7:0"
-        );
-        assert_eq!(
-            local_socket_address(Some("fe80::1")),
-            "[fe80::1]:0"
-        );
+        assert_eq!(local_socket_address(Some("192.168.1.7")), "192.168.1.7:0");
+        assert_eq!(local_socket_address(Some("fe80::1")), "[fe80::1]:0");
         assert_eq!(local_socket_address(None), "0.0.0.0:0");
     }
 }

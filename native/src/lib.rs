@@ -109,8 +109,8 @@ fn desktop_start(mut cx: FunctionContext) -> JsResult<JsString> {
     let config = cx.argument::<JsString>(1)?.value(&mut cx);
     #[cfg(target_os = "macos")]
     match desktop::start(&session, &config) {
-        Ok(value) => return Ok(cx.string(value.to_string())),
-        Err(error) => return cx.throw_error(error),
+        Ok(value) => Ok(cx.string(value.to_string())),
+        Err(error) => cx.throw_error(error),
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -124,8 +124,8 @@ fn desktop_offer(mut cx: FunctionContext) -> JsResult<JsString> {
     let sdp = cx.argument::<JsString>(1)?.value(&mut cx);
     #[cfg(target_os = "macos")]
     match desktop::offer(&session, &sdp) {
-        Ok(value) => return Ok(cx.string(value)),
-        Err(error) => return cx.throw_error(error),
+        Ok(value) => Ok(cx.string(value)),
+        Err(error) => cx.throw_error(error),
     }
     #[cfg(not(target_os = "macos"))]
     {

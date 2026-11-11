@@ -41,7 +41,9 @@
     "dev:web": "bun run --cwd packages/webui dev",
     "lint": "tsc -b && oxfmt --check . && oxlint --type-aware .",
     "lint-fix": "oxlint --type-aware . --fix && oxfmt .",
+    "lint:staged": "lint-staged",
     "pack:local": "bun run build && bun pm pack",
+    "prepare": "husky",
     "prepublishOnly": "bun run check && bun run build",
     "start": "bun dist/cli.js",
     "test": "bun test --timeout 30000 packages/server/test",
@@ -54,6 +56,8 @@
     "@types/node": "^26.6.6",
     "bun": "^1.4.4",
     "esbuild": "^0.28.2",
+    "husky": "9.1.7",
+    "lint-staged": "16.2.7",
     "oxfmt": "^0.77.0",
     "oxlint": "^1.92.0",
     "oxlint-tsgolint": "^7.0.2006",
@@ -62,6 +66,15 @@
   "optionalDependencies": {
     "lanfly-input-darwin-arm64": "0.3.0",
     "lanfly-input-darwin-x64": "0.3.0"
+  },
+  "lint-staged": {
+    "*.{ts,tsx}": [
+      "oxlint --type-aware --fix",
+      "oxfmt"
+    ],
+    "*.{js,jsx,mjs,cjs,json,md,yml,yaml}": [
+      "oxfmt"
+    ]
   },
   "engines": {
     "node": ">=22"

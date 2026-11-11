@@ -322,7 +322,10 @@ pub(crate) fn display_pixels(id: u32) -> (u32, u32) {
                 return (width as u32, height as u32);
             }
         }
-        (CGDisplayPixelsWide(id) as u32, CGDisplayPixelsHigh(id) as u32)
+        (
+            CGDisplayPixelsWide(id) as u32,
+            CGDisplayPixelsHigh(id) as u32,
+        )
     }
 }
 
