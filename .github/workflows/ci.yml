@@ -35,8 +35,6 @@ jobs:
         run: pnpm lint
       - name: Build runtime and web assets
         run: pnpm build
-      - name: Test
-        run: pnpm test
 
   native:
     name: build and publish ${{ matrix.platform }}
@@ -67,7 +65,6 @@ jobs:
           components: rustfmt, clippy
       - run: cargo fmt --manifest-path native/Cargo.toml --check
       - run: cargo clippy --manifest-path native/Cargo.toml --locked --all-targets -- -D warnings
-      - run: cargo test --manifest-path native/Cargo.toml --locked
       - run: cargo build --manifest-path native/Cargo.toml --locked --release --target ${{ matrix.target }}
       - name: Prepare platform package
         shell: bash

@@ -133,8 +133,8 @@ pnpm test          # 单元 + 双实例集成测试
 - 正式包按平台/架构使用可选的预编译包：`lanfly-input-darwin-arm64` / `lanfly-input-darwin-x64`。
 - `.github/workflows/ci.yml` **只支持手动触发**（`workflow_dispatch`），不会在 push 或 PR 后自动发布。
 - 手动触发后依次执行：
-  1. `verify`：安装、lint、构建、测试；
-  2. `native` matrix：两个 macOS 架构分别编译、测试、smoke test，并直接发布对应的 platform 包；
+  1. `verify`：安装、lint、构建（不跑测试）；
+  2. `native` matrix：两个 macOS 架构分别编译、smoke test，并直接发布对应的 platform 包（不跑 cargo test）；
   3. `publish`：等待所有 platform 包完成后，构建并发布根包 `lanfly`。
 - 两个 platform 包和主包都使用 npm trusted publishing，需要在 npm 上为三个包配置 trusted publisher。
 - 已存在的版本会被跳过，重复运行是安全的。
