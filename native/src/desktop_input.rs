@@ -285,7 +285,7 @@ pub fn handle(value: &str) -> Result<(), String> {
         }
         "source" => {
             drop(state);
-            if !crate::macos_input_source::toggle() {
+            if !crate::hid::post_caps_lock() && !crate::macos_input_source::toggle() {
                 return Err("DESKTOP_INPUT_SOURCE_FAILED".into());
             }
         }

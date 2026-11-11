@@ -19,6 +19,9 @@ mod macos;
 mod macos_input_source;
 
 #[cfg(target_os = "macos")]
+mod hid;
+
+#[cfg(target_os = "macos")]
 mod desktop;
 
 #[cfg(target_os = "macos")]

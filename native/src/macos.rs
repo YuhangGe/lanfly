@@ -700,7 +700,7 @@ pub fn inject(value: &str) -> Result<(), String> {
             return Ok(());
         }
         drop(s);
-        return if macos_input_source::toggle() {
+        return if crate::hid::post_caps_lock() || macos_input_source::toggle() {
             Ok(())
         } else {
             Err("INPUT_SOURCE_FAILED".into())
