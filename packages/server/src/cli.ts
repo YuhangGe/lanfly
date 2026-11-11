@@ -3,13 +3,13 @@ import { spawn } from 'node:child_process';
 import { parseArgs } from 'node:util';
 
 import { Application } from './app';
-import { createServerConfig } from './config';
+import { loadServerConfig, type ServerConfig } from './config';
 import { logger, setVerbose } from './logger';
 import { VERSION } from './version';
 
 interface CliOptions {
   name?: string;
-  secret?: string;
+  roomId?: string;
   port?: number;
   outDir?: string;
   noOpen: boolean;
@@ -22,11 +22,12 @@ const HELP = `lanfly ${VERSION}
 在局域网内自动发现其它 lanfly 设备，聊天并传送文件。
 
 用法：
-  npx lanfly [选项]
+  npx lanfly [ROOM ID] [选项]
+
+ROOM ID 不指定时读取 data.json，首次随机生成 6 位数字并保存；指定时覆盖保存值。
 
 选项：
   -n, --name <名称>     对外显示的设备名称，默认使用本机 hostname
-  -s, --secret <密码>   密码房间；只有相同密码的设备才能互相发现
   -p, --port <端口>     本地监听端口，默认 ${DEFAULT_PORT}，被占用时自动顺延
       --out <目录>      接收文件的保存目录，默认为系统下载目录
       --no-open         启动后不自动打开浏览器
@@ -43,7 +44,6 @@ function fail(message: string): never {
 
 interface ParsedValues {
   name?: string;
-  secret?: string;
   port?: string;
   out?: string;
   'no-open'?: boolean;
@@ -55,11 +55,11 @@ interface ParsedValues {
 
 function parseCli(): CliOptions {
   let values: ParsedValues;
+  let positionals: string[];
   try {
-    ({ values } = parseArgs({
+    ({ values, positionals } = parseArgs({
       options: {
         name: { type: 'string', short: 'n' },
-        secret: { type: 'string', short: 's' },
         port: { type: 'string', short: 'p' },
         out: { type: 'string' },
         'no-open': { type: 'boolean' },
@@ -68,7 +68,7 @@ function parseCli(): CliOptions {
         help: { type: 'boolean', short: 'h' },
         version: { type: 'boolean', short: 'v' },
       },
-      allowPositionals: false,
+      allowPositionals: true,
       strict: true,
     }));
   } catch (error) {
@@ -84,9 +84,11 @@ function parseCli(): CliOptions {
     process.exit(0);
   }
 
-  if (values.secret === '') {
-    fail('--secret 不能为空；不设置该参数即为公开房间。');
-  }
+  if (
+    positionals.length > 1 ||
+    (positionals[0] !== undefined && !/^[A-Za-z0-9_-]{1,64}$/.test(positionals[0]))
+  )
+    fail('ROOM ID 应为 1–64 位字母、数字、下划线或短横线。');
 
   let port: number | undefined;
   if (values.port !== undefined) {
@@ -98,7 +100,7 @@ function parseCli(): CliOptions {
 
   return {
     name: values.name,
-    secret: values.secret ?? process.env.LANFLY_SECRET,
+    roomId: positionals[0],
     port,
     outDir: values.out,
     noOpen: values['no-open'] ?? false,
@@ -129,14 +131,20 @@ async function main(): Promise<void> {
   const options = parseCli();
   setVerbose(options.verbose);
 
-  const config = createServerConfig({
-    name: options.name,
-    secret: options.secret,
-    port: options.port ?? DEFAULT_PORT,
-    outDir: options.outDir,
-    noDiscovery: options.noDiscovery,
-    verbose: options.verbose,
-  });
+  let config: ServerConfig;
+  try {
+    config = await loadServerConfig({
+      name: options.name,
+      roomId: options.roomId,
+      port: options.port ?? DEFAULT_PORT,
+      outDir: options.outDir,
+      noDiscovery: options.noDiscovery,
+      verbose: options.verbose,
+    });
+  } catch (error) {
+    logger.error(error);
+    fail('无法读取或保存 Room ID，请检查 data.json 的内容和目录权限。');
+  }
 
   const app = new Application(config);
   let port: number;
@@ -154,7 +162,7 @@ async function main(): Promise<void> {
   console.log('');
   console.log(`  \x1b[36m\x1b[1mlanfly\x1b[0m \x1b[90mv${VERSION}\x1b[0m`);
   console.log(`  设备      ${self.name}`);
-  console.log(`  房间      ${self.secret ? '密码房间（同密码设备可见）' : '公开房间'}`);
+  console.log(`  Room ID   ${self.roomId} （其它主机运行 npx lanfly ${self.roomId} 加入）`);
   console.log(`  本地      \x1b[4m${self.url}\x1b[0m`);
   console.log(`  局域网    http://${self.host}:${port} （浏览器接入或手动添加设备）`);
   console.log(`  下载目录  ${self.downloadsDir}`);

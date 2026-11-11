@@ -14,7 +14,7 @@ import http, { type ClientRequest } from 'node:http';
 import type { Identity } from './identity';
 
 import { ErrorCodes, throwActionError } from '../core/errors';
-import { createSignedHeaders, type Room } from '../core/security';
+import { roomHeaders, type Room } from '../core/security';
 import { logger } from '../logger';
 
 export interface PeerTarget {
@@ -44,7 +44,7 @@ function responseError(status: number): never {
 export class RemoteClient {
   constructor(
     private readonly identity: Identity,
-    private readonly room: Room | undefined,
+    private readonly room: Room,
   ) {}
 
   async info(target: PeerTarget, timeoutMs = 5_000): Promise<PeerInfo> {
@@ -120,6 +120,7 @@ export class RemoteClient {
           'content-type': 'application/octet-stream',
           'content-length': String(size),
           'x-lanfly-id': this.identity.id,
+          ...roomHeaders(this.room),
           'x-lanfly-transfer-token': token,
         },
       },
@@ -130,6 +131,8 @@ export class RemoteClient {
           length += chunk.length;
           if (length <= 64 * 1024) chunks.push(chunk);
         });
+        response.on('error', rejectDone);
+        response.on('aborted', () => rejectDone(new Error('peer upload aborted')));
         response.on('end', () => {
           resolveDone({
             status: response.statusCode ?? 0,
@@ -158,10 +161,10 @@ export class RemoteClient {
     signal?: AbortSignal,
   ): Promise<unknown> {
     const body = payload === undefined ? Buffer.alloc(0) : Buffer.from(JSON.stringify(payload));
-    const signed = createSignedHeaders(this.room, this.identity.id, { method, path, body });
+    const room = roomHeaders(this.room);
     const headers: Record<string, string> = {
       'x-lanfly-id': this.identity.id,
-      ...signed,
+      ...room,
     };
     if (body.length) {
       headers['content-type'] = 'application/json';

@@ -2,6 +2,27 @@
 pub const FLAGS_MASK: u64 = 0x01ff_ffff;
 pub const INPUT_SOURCE_KEY: u16 = 0xff;
 
+#[derive(Default)]
+pub struct InputSourceKey {
+    pressed: bool,
+}
+impl InputSourceKey {
+    /// One action per physical press, ignoring the release and duplicate notifications.
+    pub fn update(&mut self, kind: u32, key: u16, flags: u64) -> Option<bool> {
+        if kind != 12
+            || (key != INPUT_SOURCE_KEY
+                && !(key == 57
+                    && (flags & 0x0100_0080 != 0 || (self.pressed && flags & (1 << 16) == 0))))
+        {
+            return None;
+        }
+        let down = flags & 0x0100_0080 != 0;
+        let toggle = down && !self.pressed;
+        self.pressed = down;
+        Some(toggle)
+    }
+}
+
 pub fn valid_key(kind: u32, key: u16) -> bool {
     key <= 127 || (kind == 12 && key == INPUT_SOURCE_KEY)
 }
@@ -51,6 +72,24 @@ mod tests {
         assert!(!valid_key(11, INPUT_SOURCE_KEY));
         assert!(!valid_key(12, 0xfe));
         assert!(!valid_key(12, 0xffff));
+    }
+    #[test]
+    fn input_source_press_is_forwarded_once_without_forwarding_its_release() {
+        let mut key = InputSourceKey::default();
+        assert_eq!(key.update(12, INPUT_SOURCE_KEY, 0x0100_0080), Some(true));
+        assert_eq!(key.update(12, INPUT_SOURCE_KEY, 0x0100_0080), Some(false));
+        assert_eq!(key.update(12, INPUT_SOURCE_KEY, 0), Some(false));
+        assert_eq!(key.update(12, INPUT_SOURCE_KEY, 0x0100_0080), Some(true));
+    }
+    #[test]
+    fn ordinary_caps_lock_and_other_modifiers_remain_keyboard_events() {
+        let mut key = InputSourceKey::default();
+        assert_eq!(key.update(12, 57, 1 << 16), None);
+        assert_eq!(key.update(12, 57, 0), None);
+        assert_eq!(key.update(12, 56, 1 << 17), None);
+        assert_eq!(key.update(12, 57, 0x0100_0080), Some(true));
+        assert_eq!(key.update(12, 57, 1 << 16), None);
+        assert_eq!(key.update(12, INPUT_SOURCE_KEY, 0), Some(false));
     }
     #[test]
     fn preserves_stateless_caps_lock_flags() {

@@ -24,7 +24,5 @@ export const inputConfigure =
   rootProxy.inputConfigure as unknown as typeof ServerActions.inputConfigure;
 export const inputEnable = rootProxy.inputEnable as unknown as typeof ServerActions.inputEnable;
 export const inputDisable = rootProxy.inputDisable as unknown as typeof ServerActions.inputDisable;
-export const inputPairing = rootProxy.inputPairing as unknown as typeof ServerActions.inputPairing;
 export const inputConnect = rootProxy.inputConnect as unknown as typeof ServerActions.inputConnect;
-export const inputConfirm = rootProxy.inputConfirm as unknown as typeof ServerActions.inputConfirm;
 export const inputForget = rootProxy.inputForget as unknown as typeof ServerActions.inputForget;

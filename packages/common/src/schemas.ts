@@ -17,7 +17,7 @@ export const peerInfoSchema = z.object({
   name: nameSchema,
   port: z.number().int().min(1).max(65535),
   version: versionSchema,
-  secret: z.boolean(),
+  roomId: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/),
 });
 
 export const fileMetaSchema = z.object({

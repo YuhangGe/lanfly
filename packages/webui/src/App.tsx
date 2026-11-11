@@ -1,5 +1,6 @@
 import type {
   ActionResultError,
+  FileUploadRequest,
   AppState,
   ChatMessage,
   MessageStatus,
@@ -32,13 +33,14 @@ import PeerList from './components/PeerList';
 import Toasts from './components/Toasts';
 import { ActionError } from './service/action';
 import { browserMode, browserName, eventPath, joinBrowser, renameBrowser } from './service/browser';
+import { DeferredFiles } from './service/deferred-files';
 
 const EMPTY_SELF: SelfInfo = {
   id: '',
   name: 'lanfly',
   port: 0,
   version: '',
-  secret: false,
+  roomId: '',
   host: '',
   url: '',
   downloadsDir: '',
@@ -49,7 +51,7 @@ const EMPTY_PEER: PeerView = {
   name: '',
   port: 0,
   version: '',
-  secret: false,
+  roomId: '',
   host: '',
   lastSeen: 0,
   online: false,
@@ -71,7 +73,6 @@ export default function App() {
     joinBusy: false,
     joinError: '',
     browserName: browserName(),
-    password: '',
     renaming: false,
     connected: false,
     self: EMPTY_SELF,
@@ -105,6 +106,9 @@ export default function App() {
   const completedToasts = new Set<string>();
   const failedToasts = new Set<string>();
   const drafts = new Map<string, string>();
+  const deferredFiles = new DeferredFiles((file) =>
+    pushToast(`文件 ${truncate(file.name, 40)} 发送失败，请保持页面打开后重试`, 'error'),
+  );
   let autoSelectFirstPeer = true;
 
   function pushToast(text: string, kind: Toast['kind'] = 'info') {
@@ -317,6 +321,18 @@ export default function App() {
       const payload = parseEvent<{ id: string; status: MessageStatus; error?: string }>(event);
       if (payload) updateStatus(payload);
     });
+    source.addEventListener('file-upload-request', (event) => {
+      const request = parseEvent<FileUploadRequest>(event);
+      if (request) deferredFiles.request(request);
+    });
+    source.addEventListener('file-upload-cancel', (event) => {
+      const request = parseEvent<FileUploadRequest>(event);
+      if (request) deferredFiles.cancel(request.sessionId);
+    });
+    source.addEventListener('file-offer-ended', (event) => {
+      const request = parseEvent<{ transferId: string }>(event);
+      if (request) deferredFiles.forget(request.transferId);
+    });
     source.addEventListener('transfer', (event) => {
       const transfer = parseEvent<TransferView>(event);
       if (transfer) applyTransfer(transfer);
@@ -392,7 +408,8 @@ export default function App() {
       pushToast(errorText(error) || '文件发送失败', 'error');
       return;
     }
-    await upload(result.uploadUrl, file);
+    if (result.deferred) deferredFiles.hold(result, file);
+    else await upload(result.uploadUrl, file);
   }
 
   async function sendFiles(files: File[]) {
@@ -527,8 +544,7 @@ export default function App() {
     window.clearTimeout(reconnectTimer);
     model.joinBusy = true;
     try {
-      await joinBrowser(model.browserName.trim() || browserName(), model.password || undefined);
-      model.password = '';
+      await joinBrowser(model.browserName.trim() || browserName());
       model.joinOpen = false;
       model.joinError = '';
       eventSource?.close();
@@ -571,6 +587,7 @@ export default function App() {
       disposed = true;
       window.clearTimeout(reconnectTimer);
       eventSource?.close();
+      deferredFiles.stop();
       for (const timer of toastTimers) window.clearTimeout(timer);
       toastTimers.clear();
     };
@@ -606,20 +623,6 @@ export default function App() {
                 }}
               />
             </label>
-            {!model.renaming && (
-              <label>
-                房间密码
-                <input
-                  type="password"
-                  className="mt-1 w-full rounded border border-neutral-60 bg-neutral-20 p-2"
-                  aria-label="房间密码"
-                  value={model.password}
-                  on:input={(event) => {
-                    model.password = (event.target as HTMLInputElement).value;
-                  }}
-                />
-              </label>
-            )}
             {model.joinError && <p className="text-red-40">{model.joinError}</p>}
             <Button type="submit" variant="primary" disabled={model.joinBusy}>
               {model.renaming ? '保存' : '加入'}
@@ -640,20 +643,10 @@ export default function App() {
             <Avatar name={model.self.name} id={model.self.id} size="sm" />
             <span className="truncate text-[12px] text-neutral-100">{model.self.name}</span>
             <span
-              className={`flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 text-[9.5px] ${
-                model.self.secret
-                  ? 'border-blue-20 bg-blue-10 text-blue-40'
-                  : 'border-neutral-50 bg-neutral-30 text-neutral-80'
-              }`}
-              title={
-                model.self.secret ? '只有相同 --secret 的设备可见' : '同一局域网内的设备均可见'
-              }
+              className="flex shrink-0 items-center gap-1 rounded-full border border-neutral-50 bg-neutral-30 px-1.5 py-0.5 text-[9.5px] text-neutral-80"
+              title="相同 Room ID 的主机才能连接；数据明文传输"
             >
-              <span
-                className={`text-[9px] ${model.self.secret ? 'icon-[codicon--lock]' : 'icon-[codicon--unlock]'}`}
-                aria-hidden="true"
-              />
-              {model.self.secret ? '密码房间' : '公开房间'}
+              Room {model.self.roomId}
             </span>
           </div>
         )}
@@ -803,7 +796,7 @@ export default function App() {
             </div>
             <div className="mt-1 text-neutral-70/80">
               {browserMode
-                ? '文件点击下载，保留 30 分钟；保持网页打开以接收消息。'
+                ? '下载邀请有效 30 分钟；发送页面需保持打开。'
                 : '组播不可用时，点击“添加设备”输入对方 IP。'}
             </div>
           </div>
@@ -881,7 +874,7 @@ export default function App() {
                     {model.self.host}:{model.self.port}
                   </span>
                   <span className="mx-2 text-neutral-60">·</span>
-                  {model.self.secret ? '密码房间' : '公开房间'}
+                  Room {model.self.roomId}
                 </div>
               )}
             </div>

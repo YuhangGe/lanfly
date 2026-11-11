@@ -1,10 +1,5 @@
 import { inputSettingsSchema, type InputSettings } from '@lanfly/common';
-import {
-  createPrivateKey,
-  createPublicKey,
-  generateKeyPairSync,
-  type KeyObject,
-} from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -12,29 +7,27 @@ import { z } from 'zod';
 
 import { DataStore } from '../data';
 
+const targetSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string().max(64),
+  host: z.string().max(255),
+  port: z.number().int().min(1).max(65535),
+  roomId: z.string().min(1).max(64),
+});
 const savedSchema = z.object({
-  version: z.literal(1),
-  privateKey: z.string(),
+  version: z.literal(2),
+  id: z.string().uuid(),
   settings: inputSettingsSchema,
   autoStart: z.boolean().default(false),
-  paired: z
-    .object({
-      key: z.string().max(256),
-      name: z.string().max(64),
-      host: z.string().max(255),
-      port: z.number().int().min(1).max(65535),
-    })
-    .optional(),
+  target: targetSchema.optional(),
 });
+const legacySchema = z.object({ version: z.literal(1), settings: inputSettingsSchema });
 export type SavedInput = z.infer<typeof savedSchema>;
-
 export class InputStore {
-  readonly file: string;
-  data: SavedInput | undefined;
-  key: KeyObject | undefined;
   readonly storage: DataStore;
+  readonly file: string;
+  data?: SavedInput;
   readonly #legacyFile: string;
-
   constructor(directory?: string) {
     this.storage = new DataStore(directory);
     this.file = this.storage.file;
@@ -45,51 +38,40 @@ export class InputStore {
       'input.json',
     );
   }
-
   async load(): Promise<void> {
     try {
       await this.storage.load();
-      const saved = this.storage.get('input');
-      if (saved !== undefined) this.data = savedSchema.parse(saved);
-      else {
+      let saved = this.storage.get('input');
+      if (saved === undefined) {
         try {
-          const legacy = savedSchema.parse(JSON.parse(await readFile(this.#legacyFile, 'utf8')));
-          this.data = { ...legacy, autoStart: Boolean(legacy.paired) };
+          saved = JSON.parse(await readFile(this.#legacyFile, 'utf8'));
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-          const { privateKey } = generateKeyPairSync('x25519');
-          this.data = {
-            version: 1,
-            privateKey: privateKey.export({ type: 'pkcs8', format: 'der' }).toString('base64'),
-            settings: { role: 'server', edge: 'right' },
-            autoStart: false,
-          };
         }
       }
-      this.key = createPrivateKey({
-        key: Buffer.from(this.data.privateKey, 'base64'),
-        type: 'pkcs8',
-        format: 'der',
-      });
-      if (this.key.asymmetricKeyType !== 'x25519') throw new Error('INPUT_CONFIG_ERROR');
-      if (saved === undefined) await this.save();
+      if (saved !== undefined && (saved as { version?: number }).version === 2)
+        this.data = savedSchema.parse(saved);
+      else {
+        // Old cryptographic pairings have no Room ID. Retain layout only; reconnect explicitly in the new room.
+        const legacy = saved === undefined ? undefined : legacySchema.parse(saved);
+        this.data = {
+          version: 2,
+          id: randomUUID(),
+          settings: legacy?.settings ?? { role: 'server', edge: 'right' },
+          autoStart: false,
+        };
+        await this.save();
+      }
     } catch {
       throw new Error('INPUT_CONFIG_ERROR');
     }
   }
-
-  get publicKey(): string {
-    return createPublicKey(this.key!).export({ type: 'spki', format: 'der' }).toString('base64');
-  }
-
   get settings(): InputSettings {
     return this.data?.settings ?? { role: 'server', edge: 'right' };
   }
-
   async save(): Promise<void> {
     await this.storage.set('input', this.data);
   }
-
   async flush(): Promise<void> {
     await this.storage.flush();
   }

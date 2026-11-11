@@ -23,6 +23,10 @@ export class EventHub {
     this.#heartbeat.unref();
   }
 
+  get connections(): number {
+    return this.#clients.size;
+  }
+
   add(response: ServerResponse): void {
     response.writeHead(200, {
       'content-type': 'text/event-stream; charset=utf-8',

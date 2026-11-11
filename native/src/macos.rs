@@ -1,7 +1,8 @@
 //! Quartz events stay on a native run-loop thread. No JS callback runs in an event tap.
 //! A native watchdog restores local input even when Node stops polling or stalls.
 use crate::cursor::{CursorBackend, CursorCapture};
-use crate::keyboard::{FLAGS_MASK, held_key, valid_key};
+use crate::keyboard::{FLAGS_MASK, InputSourceKey, held_key, valid_key};
+use crate::macos_input_source;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
@@ -203,6 +204,7 @@ struct State {
     keys: BTreeSet<u16>,
     buttons: BTreeSet<u32>,
     physical_keys: BTreeSet<u16>,
+    input_source_key: InputSourceKey,
     physical_buttons: BTreeSet<u32>,
     queue: Vec<Value>,
     tick: Instant,
@@ -222,6 +224,7 @@ impl Default for State {
             keys: BTreeSet::new(),
             buttons: BTreeSet::new(),
             physical_keys: BTreeSet::new(),
+            input_source_key: InputSourceKey::default(),
             physical_buttons: BTreeSet::new(),
             queue: Vec::new(),
             tick: Instant::now(),
@@ -294,6 +297,7 @@ fn post(event: Ref) {
 }
 
 fn release(s: &mut State) {
+    s.input_source_key = InputSourceKey::default();
     s.capture.release(&mut MacCursor {
         bounds: s.bounds,
         restore: s.cursor,
@@ -326,11 +330,13 @@ fn release(s: &mut State) {
 }
 
 pub fn reset() {
+    macos_input_source::capture(false, false);
     let mut s = state().lock().unwrap();
     release(&mut s);
     s.queue.clear();
 }
 pub fn stop() {
+    macos_input_source::capture(false, false);
     let mut s = state().lock().unwrap();
     release(&mut s);
     s.enabled = false;
@@ -536,6 +542,12 @@ extern "C" fn callback(_proxy: Ref, kind: u32, event: Ref, _user: Ref) -> Ref {
         s.queue.push(json!({"kind":"fault"}));
         return event;
     }
+    if let Some(switching) = s.input_source_key.update(kind, key, flags) {
+        if switching {
+            s.queue.push(json!({"kind":"input-source"}));
+        }
+        return null_mut();
+    }
     s.queue
         .push(json!({"kind":"event", "t":kind, "flags":flags & FLAGS_MASK,
         "key":key, "button":button.min(31), "dx":dx, "dy":dy,
@@ -554,7 +566,18 @@ extern "C" fn callback(_proxy: Ref, kind: u32, event: Ref, _user: Ref) -> Ref {
 pub fn poll() -> Value {
     let mut s = state().lock().unwrap();
     s.tick = Instant::now();
-    Value::Array(std::mem::take(&mut s.queue))
+    let remote = s.enabled && s.server && s.remote;
+    let mut events = std::mem::take(&mut s.queue);
+    drop(s);
+    let switching = events.iter().any(|e| e["kind"] == "input-source");
+    if !macos_input_source::capture(remote, switching) {
+        let mut s = state().lock().unwrap();
+        release(&mut s);
+        s.enabled = false;
+        events.clear();
+        events.push(json!({"kind":"fault", "reason":"input-source"}));
+    }
+    Value::Array(events)
 }
 
 #[derive(Deserialize, Default)]
@@ -618,6 +641,17 @@ pub fn inject(value: &str) -> Result<(), String> {
         }
         return Ok(());
     }
+    if e.kind == "input-source" {
+        if !s.remote {
+            return Ok(());
+        }
+        drop(s);
+        return if macos_input_source::toggle() {
+            Ok(())
+        } else {
+            Err("INPUT_SOURCE_FAILED".into())
+        };
+    }
     if e.kind != "event"
         || !matches!(e.t, 1..=7 | 10..=12 | 22 | 25..=27)
         || !valid_key(e.t, e.key)
@@ -636,6 +670,15 @@ pub fn inject(value: &str) -> Result<(), String> {
     }
     if !s.remote {
         return Ok(());
+    }
+    // Compatibility with peers that still forward the stateless input-source notification.
+    if let Some(switching) = s.input_source_key.update(e.t, e.key, e.flags) {
+        drop(s);
+        return if !switching || macos_input_source::toggle() {
+            Ok(())
+        } else {
+            Err("INPUT_SOURCE_FAILED".into())
+        };
     }
     unsafe {
         let event = if matches!(e.t, 10..=12) {

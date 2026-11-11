@@ -18,7 +18,7 @@ import type { ServerConfig } from './config';
 
 import { ErrorCodes, errorCode, throwActionError } from './core/errors';
 import { createHttpHandler } from './core/router';
-import { ReplayGuard, randomToken } from './core/security';
+import { randomToken } from './core/security';
 import { MulticastDiscovery } from './discovery/multicast';
 import { InputService } from './input/service';
 import { logger } from './logger';
@@ -43,7 +43,6 @@ export class Application {
   readonly messages: MessageStore;
   readonly transfers: TransferStore;
   readonly remote: RemoteClient;
-  readonly replayGuard = new ReplayGuard();
   readonly config: ServerConfig;
   readonly input: InputService;
   readonly network: BrowserNetwork;
@@ -61,7 +60,7 @@ export class Application {
     this.messages = new MessageStore(this.events);
     this.transfers = new TransferStore(this.events);
     this.remote = new RemoteClient(this.identity, this.identity.room);
-    this.input = new InputService(this.identity.name, this.events);
+    this.input = new InputService(this.identity.name, this.events, { roomId: config.roomId });
     this.network = new BrowserNetwork(this);
     this.events.peersProvider = () => this.network.peers();
     this.events.onPeersChanged = () => this.network.publishBrowserPeers();
@@ -89,6 +88,7 @@ export class Application {
       await this.stop();
       throw error;
     }
+    this.input.listen(port);
     this.input.resume();
 
     if (!this.config.noDiscovery) {
@@ -110,9 +110,7 @@ export class Application {
     this.#heartbeatTimer = setInterval(() => void this.#heartbeat(), 5_000);
     this.#heartbeatTimer.unref();
 
-    logger.info(
-      `lanfly 已启动：${this.identity.name}，${this.identity.secret ? '密码房间' : '公开房间'}，端口 ${port}`,
-    );
+    logger.info(`lanfly 已启动：${this.identity.name}，${this.identity.roomId}，端口 ${port}`);
     return port;
   }
 
@@ -204,7 +202,7 @@ export class Application {
       info = await this.remote.info(target);
     } catch (error) {
       if (errorCode(error) === ErrorCodes.PEER_UNAUTHORIZED) {
-        throwActionError(ErrorCodes.SECRET_MISMATCH);
+        throwActionError(ErrorCodes.ROOM_MISMATCH);
       }
       throw error;
     }
@@ -262,6 +260,10 @@ export class Application {
   }
 
   cancelTransfer(input: { transferId: string }): TransferView | undefined {
+    if (this.network.outgoing.has(input.transferId)) {
+      this.network.cancel(this.identity.id, input.transferId);
+      return this.transfers.list().find((t) => t.id === input.transferId);
+    }
     const transfer = this.transfers.get(input.transferId);
     if (!transfer) throwActionError(ErrorCodes.TRANSFER_NOT_FOUND);
     if (
@@ -332,7 +334,7 @@ export class Application {
   }
 
   #ensureCompatible(info: PeerInfo): void {
-    if (info.secret !== this.identity.secret) throwActionError(ErrorCodes.SECRET_MISMATCH);
+    if (info.roomId !== this.identity.roomId) throwActionError(ErrorCodes.ROOM_MISMATCH);
   }
 
   #handleAnnouncement(kind: 'announce' | 'bye', info: PeerInfo, host: string): void {

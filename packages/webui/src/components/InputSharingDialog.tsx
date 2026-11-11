@@ -1,13 +1,9 @@
 import type { InputEdge, InputStatus, PeerView } from '@lanfly/common';
 
 import {
-  inputConfigure,
-  inputConfirm,
   inputConnect,
   inputDisable,
-  inputEnable,
   inputForget,
-  inputPairing,
   inputPermissions,
   inputRefresh,
   inputStatus,
@@ -28,36 +24,21 @@ const EMPTY: InputStatus = {
   enabled: false,
   phase: 'disabled',
   controlling: false,
-  confirmed: false,
 };
 const phaseText = {
   disabled: '已停止',
   waiting: '等待连接',
   connecting: '正在连接',
-  pairing: '等待双方确认',
   connected: '已连接',
 };
-const edges: { value: InputEdge; label: string; arrow: string }[] = [
-  { value: 'left', label: '左侧', arrow: '←' },
-  { value: 'right', label: '右侧', arrow: '→' },
-  { value: 'top', label: '上方', arrow: '↑' },
-  { value: 'bottom', label: '下方', arrow: '↓' },
-];
 const fieldClass =
   'rounded-control border border-neutral-60 bg-neutral-40 px-2.5 py-2 text-[12px] text-neutral-110 outline-none focus:border-blue-40 disabled:opacity-50';
-function edgeArrow(edge: InputEdge) {
-  return edges.find((e) => e.value === edge)?.arrow ?? '→';
-}
-function untilText(until: number | undefined) {
-  return until ? new Date(until).toLocaleTimeString() : '';
-}
-function statusError(code: string | undefined) {
-  return code ? new ActionError({ code }).message : '';
-}
 function phaseLabel(phase: InputStatus['phase']) {
   return phaseText[phase];
 }
-
+function statusError(code: string) {
+  return new ActionError({ code }).message;
+}
 export default function InputSharingDialog(props: {
   peers: PeerView[];
   activePeerId: string;
@@ -70,11 +51,10 @@ export default function InputSharingDialog(props: {
     error: '',
     role: 'server' as 'server' | 'client',
     edge: 'right' as InputEdge,
-    peerId: props.activePeerId,
+    peerId: props.peers.find((p) => p.id === props.activePeerId && p.kind !== 'browser')?.id ?? '',
   });
   let mounted = true;
   let sequence = 0;
-
   async function refresh() {
     const version = ++sequence;
     const [error, status] = await inputStatus({ toastError: false });
@@ -85,14 +65,17 @@ export default function InputSharingDialog(props: {
       return;
     }
     if (!status) return;
-    if (model.loading) {
+    if (
+      model.loading ||
+      status.settings.role !== model.status.settings.role ||
+      status.settings.edge !== model.status.settings.edge
+    ) {
       model.role = status.settings.role;
       model.edge = status.settings.edge;
     }
     model.status = status;
     model.loading = false;
   }
-
   async function run(action: () => ReturnType<typeof inputStatus>) {
     if (model.busy) return;
     model.busy = true;
@@ -102,25 +85,15 @@ export default function InputSharingDialog(props: {
       const [error, status] = await action();
       if (!mounted) return;
       if (error) model.error = new ActionError(error).message;
-      else if (status) model.status = status;
+      else if (status) {
+        model.status = status;
+        model.role = status.settings.role;
+        model.edge = status.settings.edge;
+      }
     } finally {
       if (mounted) model.busy = false;
     }
   }
-
-  async function enable() {
-    await run(async () => {
-      const [error] = await inputConfigure({
-        input: { role: model.role, edge: model.edge },
-        toastError: false,
-      });
-      if (error) return [error];
-      const result = await inputEnable({ toastError: false });
-      if (result[0] || model.role !== 'client' || !model.peerId) return result;
-      return inputConnect({ input: { peerId: model.peerId }, toastError: false });
-    });
-  }
-
   onMount(() => {
     void refresh();
     const timer = window.setInterval(() => {
@@ -131,26 +104,21 @@ export default function InputSharingDialog(props: {
       window.clearInterval(timer);
     };
   });
-
   return (
     <Dialog title="键鼠共享" size="wide" onClose={props.onClose}>
       <div className="flex flex-col gap-4 text-[12px] text-neutral-90">
         <p className="m-0 leading-relaxed">
-          两台 Mac 共用一套键鼠。服务端提供键鼠，客户端接收控制，双方均需使用单显示器。
+          两台单屏 Mac
+          共用一套键鼠。选择本机角色后连接，对方自动使用相反角色，无需配对或确认校验码。
         </p>
         {model.loading && <p role="status">正在读取本机状态…</p>}
         {!model.loading && !model.status.supported && (
-          <p className="rounded-control border border-neutral-50 bg-neutral-20 p-3">
-            当前系统暂不支持键鼠共享。首版支持 macOS 的 Apple Silicon 和 Intel
-            机型，聊天与文件传输仍可正常使用。
-          </p>
+          <p>当前系统暂不支持键鼠共享；聊天与文件传输仍可使用。</p>
         )}
         {!model.loading && model.status.supported && (
           <>
             {!model.status.available && (
-              <p className="text-red-40">
-                未找到原生组件，请重新安装 lanfly，并确认安装时允许可选依赖。
-              </p>
+              <p className="text-red-40">未找到原生组件，请重新安装 lanfly，并允许安装可选依赖。</p>
             )}
             {model.status.available && (
               <div className="rounded-control border border-neutral-50 bg-neutral-20 p-3 text-[11px] leading-relaxed">
@@ -159,22 +127,15 @@ export default function InputSharingDialog(props: {
                   {model.status.inputMonitoring ? '已授权' : '未授权'} · 显示器：
                   {model.status.screens} 个
                 </div>
-                <Button
-                  variant="secondary"
-                  disabled={model.busy}
-                  on:click={() => void run(() => inputRefresh({ toastError: false }))}
-                >
-                  刷新权限
-                </Button>
-                {model.status.screens !== 1 && (
-                  <p className="mb-0 text-red-40">暂不支持多显示器，请断开外接显示器后重试。</p>
-                )}
-                {(!model.status.accessibility || !model.status.inputMonitoring) && (
-                  <div className="mt-2 flex flex-col items-start gap-2">
-                    <span>
-                      请在“系统设置 → 隐私与安全性”中授权运行 lanfly 的终端或 Node
-                      进程。授权后点击“刷新权限”，即可继续配置，无需重启 lanfly。
-                    </span>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <Button
+                    variant="secondary"
+                    disabled={model.busy}
+                    on:click={() => void run(() => inputRefresh({ toastError: false }))}
+                  >
+                    刷新权限
+                  </Button>
+                  {(!model.status.accessibility || !model.status.inputMonitoring) && (
                     <Button
                       variant="secondary"
                       disabled={model.busy}
@@ -182,7 +143,17 @@ export default function InputSharingDialog(props: {
                     >
                       请求系统授权
                     </Button>
-                  </div>
+                  )}
+                </div>
+                {(!model.status.accessibility || !model.status.inputMonitoring) && (
+                  <p className="mb-0">
+                    请在系统设置中授权运行 lanfly 的终端或 Node 进程，再点击“刷新权限”，无需重启。
+                  </p>
+                )}
+                {model.status.screens !== 1 && (
+                  <p className="mb-0 text-red-40">
+                    双方均需一个活动显示器，请断开外接显示器后重试。
+                  </p>
                 )}
               </div>
             )}
@@ -191,7 +162,7 @@ export default function InputSharingDialog(props: {
                 本机角色
                 <select
                   value={model.role}
-                  disabled={model.status.enabled || model.busy}
+                  disabled={model.busy}
                   className={fieldClass}
                   on:change={(e) => {
                     model.role = e.target.value as 'server' | 'client';
@@ -201,146 +172,75 @@ export default function InputSharingDialog(props: {
                   <option value="client">客户端 · 接收控制</option>
                 </select>
               </label>
-              {model.role === 'server' && (
-                <label className="flex flex-col gap-1.5">
-                  客户端位于本机
-                  <select
-                    value={model.edge}
-                    disabled={model.status.enabled || model.busy}
-                    className={fieldClass}
-                    on:change={(e) => {
-                      model.edge = e.target.value as InputEdge;
-                    }}
-                  >
-                    <option value="left">← 左侧</option>
-                    <option value="right">→ 右侧</option>
-                    <option value="top">↑ 上方</option>
-                    <option value="bottom">↓ 下方</option>
-                  </select>
-                </label>
-              )}
-              {model.role === 'client' && (
-                <label className="flex flex-col gap-1.5">
-                  连接服务端
-                  <select
-                    value={model.peerId}
-                    disabled={model.status.enabled || model.busy}
-                    className={fieldClass}
-                    on:change={(e) => {
-                      model.peerId = e.target.value;
-                    }}
-                  >
-                    <option value="">
-                      {model.status.pairedName
-                        ? `已配对：${model.status.pairedName}`
-                        : '请选择一台设备'}
-                    </option>
-                    {props.peers
-                      .filter((peer) => peer.kind !== 'browser')
-                      .map((peer) => (
-                        <option key={peer.id} value={peer.id}>
-                          {peer.name}
-                          {peer.online ? '' : '（离线）'}
-                        </option>
-                      ))}
-                  </select>
-                </label>
-              )}
+              <label className="flex flex-col gap-1.5">
+                连接设备
+                <select
+                  value={model.peerId}
+                  disabled={model.busy}
+                  className={fieldClass}
+                  on:change={(e) => {
+                    model.peerId = e.target.value;
+                  }}
+                >
+                  <option value="">请选择一台设备</option>
+                  {props.peers
+                    .filter((p) => p.kind !== 'browser')
+                    .map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                        {p.online ? '' : '（离线）'}
+                      </option>
+                    ))}
+                </select>
+              </label>
+              <label className="col-span-2 flex flex-col gap-1.5">
+                客户端位于服务端
+                <select
+                  value={model.edge}
+                  disabled={model.busy}
+                  className={fieldClass}
+                  on:change={(e) => {
+                    model.edge = e.target.value as InputEdge;
+                  }}
+                >
+                  <option value="left">← 左侧</option>
+                  <option value="right">→ 右侧</option>
+                  <option value="top">↑ 上方</option>
+                  <option value="bottom">↓ 下方</option>
+                </select>
+              </label>
             </div>
-            {model.role === 'server' && (
-              <div
-                className={`flex items-center justify-center gap-4 rounded-control border border-neutral-50 bg-neutral-20 py-4 text-neutral-100 ${model.edge === 'left' ? 'flex-row-reverse' : model.edge === 'top' ? 'flex-col-reverse' : model.edge === 'bottom' ? 'flex-col' : 'flex-row'}`}
-              >
-                <span className="rounded-control border border-neutral-60 px-4 py-3">
-                  本机 · 服务端
-                </span>
-                <span className="text-xl text-blue-40">{edgeArrow(model.edge)}</span>
-                <span className="rounded-control border border-neutral-60 px-4 py-3">
-                  另一台 Mac
-                </span>
-              </div>
-            )}
             <div className="rounded-control border border-neutral-50 p-3" aria-live="polite">
-              <div className="flex items-center gap-2 font-medium text-neutral-110">
-                <span
-                  className={`size-2 rounded-full ${model.status.phase === 'connected' ? 'bg-green-40' : 'bg-neutral-70'}`}
-                />
+              <strong>
                 {phaseLabel(model.status.phase)}
-                {model.status.peerName && <span>· {model.status.peerName}</span>}
-              </div>
+                {model.status.peerName ? ` · ${model.status.peerName}` : ''}
+              </strong>
               {model.status.phase === 'connected' && (
-                <p className="mb-0 text-[11px]">
+                <p className="mb-0">
                   {model.status.controlling ? '键鼠正在客户端上使用' : '键鼠在服务端本机'}
-                  。移动到相邻屏幕边缘即可切换。
+                  ，移到相邻屏幕边缘即可切换。
                 </p>
-              )}
-              {model.status.phase === 'waiting' && (
-                <p className="mb-0 text-[11px]">
-                  {model.role === 'server'
-                    ? '请在另一台 Mac 的 WebUI 中选择“客户端”并连接本机。'
-                    : '正在等待服务端；请确认对方已启用共享。'}
-                </p>
-              )}
-              {model.status.pairingUntil && model.status.phase !== 'pairing' && (
-                <p className="mb-0 text-[11px]">
-                  允许首次配对至 {untilText(model.status.pairingUntil)}。
-                </p>
-              )}
-              {model.status.phase === 'pairing' && model.status.pairingCode && (
-                <div className="mt-3 flex flex-col items-start gap-3">
-                  <span>请核对两台 Mac 的校验码完全相同，再分别确认：</span>
-                  <strong className="font-mono text-2xl tracking-[0.25em] text-neutral-110">
-                    {model.status.pairingCode}
-                  </strong>
-                  <Button
-                    variant="primary"
-                    disabled={model.busy || model.status.confirmed}
-                    on:click={() =>
-                      void run(() =>
-                        inputConfirm({
-                          input: { code: model.status.pairingCode! },
-                          toastError: false,
-                        }),
-                      )
-                    }
-                  >
-                    {model.status.confirmed ? '已确认，等待对方' : '两端校验码相同，确认配对'}
-                  </Button>
-                </div>
               )}
               {model.status.error && (
                 <p className="mb-0 text-red-40">{statusError(model.status.error)}</p>
               )}
             </div>
             <p className="m-0 text-[11px] leading-relaxed text-neutral-80">
-              紧急停止：在任一台 Mac 按 Ctrl + Option + Command + Esc。关闭网页会继续共享；退出
-              lanfly
-              后停止。配对和位置会保存，正常退出后下次启动自动恢复共享；手动停止或紧急停止会关闭自动恢复。不包含剪贴板同步。
+              双方授权后，同 Room ID 的主机可直接连接。一次只连接一台设备。Ctrl + Option + Command +
+              Esc 可停止双方共享。连接和位置会保存，同一 Room ID
+              再次启动时自动恢复；手动停止会关闭自动恢复。不包含剪贴板同步。
             </p>
             <div className="flex flex-wrap justify-end gap-2">
-              {model.status.pairedName && (
+              {model.status.targetName && (
                 <Button
                   variant="ghost"
                   disabled={model.busy}
                   on:click={() => void run(() => inputForget({ toastError: false }))}
                 >
-                  解除与 {model.status.pairedName} 的配对
+                  清除已保存连接
                 </Button>
               )}
-              {model.status.enabled &&
-                model.role === 'server' &&
-                !model.status.pairedName &&
-                !model.status.pairingUntil &&
-                model.status.phase === 'waiting' && (
-                  <Button
-                    variant="secondary"
-                    disabled={model.busy}
-                    on:click={() => void run(() => inputPairing({ toastError: false }))}
-                  >
-                    允许首次配对
-                  </Button>
-                )}
-              {model.status.enabled ? (
+              {model.status.enabled && (
                 <Button
                   variant="secondary"
                   disabled={model.busy}
@@ -348,22 +248,28 @@ export default function InputSharingDialog(props: {
                 >
                   停止共享
                 </Button>
-              ) : (
-                <Button
-                  variant="primary"
-                  disabled={
-                    model.busy ||
-                    !model.status.available ||
-                    !model.status.accessibility ||
-                    !model.status.inputMonitoring ||
-                    model.status.screens !== 1 ||
-                    (model.role === 'client' && !model.peerId && !model.status.pairedName)
-                  }
-                  on:click={() => void enable()}
-                >
-                  {model.busy ? '正在启用…' : '保存并启用'}
-                </Button>
               )}
+              <Button
+                variant="primary"
+                disabled={
+                  model.busy ||
+                  !model.peerId ||
+                  !model.status.available ||
+                  !model.status.accessibility ||
+                  !model.status.inputMonitoring ||
+                  model.status.screens !== 1
+                }
+                on:click={() =>
+                  void run(() =>
+                    inputConnect({
+                      input: { peerId: model.peerId, role: model.role, edge: model.edge },
+                      toastError: false,
+                    }),
+                  )
+                }
+              >
+                {model.busy ? '正在连接…' : '连接'}
+              </Button>
             </div>
           </>
         )}

@@ -4,8 +4,7 @@ export const inputSettingsSchema = z.object({
   role: z.enum(['server', 'client']),
   edge: z.enum(['left', 'right', 'top', 'bottom']),
 });
-export const inputConnectSchema = z.object({ peerId: z.string().min(1).max(64) });
-export const inputConfirmSchema = z.object({ code: z.string().regex(/^\d{8}$/) });
+export const inputConnectSchema = inputSettingsSchema.extend({ peerId: z.string().min(1).max(64) });
 export type InputSettings = z.infer<typeof inputSettingsSchema>;
 export type InputEdge = InputSettings['edge'];
 
@@ -17,12 +16,9 @@ export interface InputStatus {
   screens: number;
   settings: InputSettings;
   enabled: boolean;
-  phase: 'disabled' | 'waiting' | 'connecting' | 'pairing' | 'connected';
+  phase: 'disabled' | 'waiting' | 'connecting' | 'connected';
   controlling: boolean;
   peerName?: string;
-  pairedName?: string;
-  pairingCode?: string;
-  confirmed: boolean;
-  pairingUntil?: number;
+  targetName?: string;
   error?: string;
 }

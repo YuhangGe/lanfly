@@ -67,13 +67,13 @@ export class PeerStore {
       existing.port !== info.port ||
       existing.host !== host ||
       existing.version !== info.version ||
-      existing.secret !== info.secret ||
+      existing.roomId !== info.roomId ||
       (upgradeManual && !existing.manual);
 
     existing.name = info.name;
     existing.port = info.port;
     existing.version = info.version;
-    existing.secret = info.secret;
+    existing.roomId = info.roomId;
     existing.host = host;
     existing.lastSeen = now;
     existing.online = true;

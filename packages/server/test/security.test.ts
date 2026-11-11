@@ -1,127 +1,67 @@
-import type { IncomingHttpHeaders } from 'node:http';
-
-import { ANNOUNCE_MAX_AGE_MS, PROTOCOL_VERSION, type PeerInfo } from '@lanfly/common';
+import { PROTOCOL_VERSION, type PeerInfo } from '@lanfly/common';
 import { describe, expect, it } from 'bun:test';
 
+import { createServerConfig } from '../src/config';
 import {
   createRoom,
-  createSignedHeaders,
-  decodeAnnouncement,
   encodeAnnouncement,
-  ReplayGuard,
+  decodeAnnouncement,
+  matchesRoom,
+  roomHeaders,
   safeTokenEquals,
-  verifySignedRequest,
 } from '../src/core/security';
-
 const info: PeerInfo = {
-  id: 'peer-a',
-  name: 'Test A',
+  id: 'device-a',
+  name: 'Test',
   port: 8087,
-  version: '0.1.0',
-  secret: false,
+  version: '0.2.0',
+  roomId: '123456',
 };
-
-function toHeaders(record: Record<string, string>): IncomingHttpHeaders {
-  return { ...record };
-}
-
-describe('房间密钥与公告', () => {
-  it('相同密码派生出相同房间标识，不同密码隔离', () => {
-    const first = createRoom('correct horse battery staple')!;
-    const second = createRoom('correct horse battery staple')!;
-    const other = createRoom('another secret')!;
-    expect(first.tag.equals(second.tag)).toBe(true);
-    expect(first.tag.equals(other.tag)).toBe(false);
-    expect(first.secret).toBe(true);
-    expect(createRoom('')).toBeUndefined();
+describe('plaintext room isolation', () => {
+  it('generates a six digit room ID when absent, and preserves explicit IDs', () => {
+    expect(createServerConfig({}).roomId).toMatch(/^\d{6}$/);
+    expect(createServerConfig({ roomId: '000123' }).roomId).toBe('000123');
+    expect(createServerConfig({ roomId: 'team-a' }).roomId).toBe('team-a');
+    expect(() => createServerConfig({ roomId: '' })).toThrow('ROOM_ID_INVALID');
   });
-
-  it('公开房间公告可以被公开设备解开', () => {
-    const packet = encodeAnnouncement({ kind: 'announce', info, ts: Date.now() }, undefined);
-    const decoded = decodeAnnouncement(packet, undefined);
-    expect(decoded?.info).toEqual(info);
-    expect(decoded?.kind).toBe('announce');
-  });
-
-  it('密码房间公告只对相同密码可见', () => {
-    const room = createRoom('secret-one')!;
-    const other = createRoom('secret-two')!;
+  it('announcements are readable plaintext and only accepted in the same room', () => {
     const packet = encodeAnnouncement(
-      { kind: 'announce', info: { ...info, secret: true }, ts: Date.now() },
-      room,
+      { kind: 'announce', info, ts: Date.now() },
+      createRoom('123456'),
     );
-    expect(decodeAnnouncement(packet, undefined)).toBeNull();
-    expect(decodeAnnouncement(packet, other)).toBeNull();
-    expect(decodeAnnouncement(packet, room)?.info.id).toBe(info.id);
+    expect(packet.toString()).toContain('"name":"Test"');
+    expect(packet.toString()).toContain('123456');
+    expect(decodeAnnouncement(packet, createRoom('123456'))?.info).toEqual(info);
+    expect(decodeAnnouncement(packet, createRoom('654321'))).toBeNull();
   });
-
-  it('被篡改或过期的公告会被丢弃', () => {
-    const room = createRoom('secret-one')!;
-    const packet = encodeAnnouncement(
-      { kind: 'announce', info: { ...info, secret: true }, ts: Date.now() },
-      room,
+  it('rejects old, invalid and mismatched announcements', () => {
+    const room = createRoom('123456');
+    expect(
+      decodeAnnouncement(encodeAnnouncement({ kind: 'bye', info, ts: 1 }, room), room),
+    ).toBeNull();
+    expect(decodeAnnouncement(Buffer.from('garbage'), room)).toBeNull();
+    const bad = Buffer.from(
+      `LANFLY3\0${JSON.stringify({ v: PROTOCOL_VERSION + 1, kind: 'announce', info, roomId: '123456', ts: Date.now() })}`,
     );
-    const tampered = Buffer.from(packet);
-    tampered[tampered.length - 1] ^= 0xff;
-    expect(decodeAnnouncement(tampered, room)).toBeNull();
-
-    const expired = encodeAnnouncement(
-      {
-        kind: 'announce',
-        info: { ...info, secret: true },
-        ts: Date.now() - ANNOUNCE_MAX_AGE_MS - 1_000,
-      },
-      room,
-    );
-    expect(decodeAnnouncement(expired, room)).toBeNull();
+    expect(decodeAnnouncement(bad, room)).toBeNull();
+    expect(
+      decodeAnnouncement(
+        encodeAnnouncement(
+          { kind: 'announce', info: { ...info, roomId: 'other' }, ts: Date.now() },
+          room,
+        ),
+        room,
+      ),
+    ).toBeNull();
   });
-
-  it('协议版本不符的公告会被丢弃', () => {
-    const packet = encodeAnnouncement({ kind: 'announce', info, ts: Date.now() }, undefined);
-    const raw = JSON.parse(packet.subarray(8).toString('utf8')) as Record<string, unknown>;
-    raw.v = PROTOCOL_VERSION + 99;
-    const invalid = Buffer.concat([Buffer.from('LANFLY1\0'), Buffer.from(JSON.stringify(raw))]);
-    expect(decodeAnnouncement(invalid, undefined)).toBeNull();
+  it('requires the room header; there is no public or encrypted branch', () => {
+    const room = createRoom('123456');
+    expect(matchesRoom(room, roomHeaders(room))).toBe(true);
+    expect(matchesRoom(room, {})).toBe(false);
+    expect(matchesRoom(room, { 'x-lanfly-room': '654321' })).toBe(false);
   });
-});
-
-describe('请求签名', () => {
-  const room = createRoom('request-secret')!;
-  const request = {
-    method: 'POST',
-    path: '/api/v1/peer/messages',
-    body: Buffer.from('{"hello":"world"}'),
-  };
-
-  it('正确签名通过校验，重复 nonce 被拒绝', () => {
-    const headers = createSignedHeaders(room, info.id, request);
-    const guard = new ReplayGuard();
-    expect(verifySignedRequest(room, toHeaders(headers), request, guard)?.id).toBe(info.id);
-    expect(verifySignedRequest(room, toHeaders(headers), request, guard)).toBeNull();
-  });
-
-  it('请求体被修改后签名失效', () => {
-    const headers = createSignedHeaders(room, info.id, request);
-    const guard = new ReplayGuard();
-    const changed = { ...request, body: Buffer.from('{"hello":"tampered"}') };
-    expect(verifySignedRequest(room, toHeaders(headers), changed, guard)).toBeNull();
-  });
-
-  it('其它密码房间无法通过校验', () => {
-    const headers = createSignedHeaders(room, info.id, request);
-    const other = createRoom('other-secret')!;
-    expect(verifySignedRequest(other, toHeaders(headers), request, new ReplayGuard())).toBeNull();
-  });
-
-  it('缺少签名头时校验失败', () => {
-    expect(verifySignedRequest(room, {}, request, new ReplayGuard())).toBeNull();
-  });
-});
-
-describe('令牌比较', () => {
-  it('相同令牌为真，长度不同为假', () => {
-    expect(safeTokenEquals('abc', 'abc')).toBe(true);
-    expect(safeTokenEquals('abc', 'abcd')).toBe(false);
-    expect(safeTokenEquals('abc', 'abd')).toBe(false);
+  it('compares upload and browser session tokens', () => {
+    expect(safeTokenEquals('token', 'token')).toBe(true);
+    expect(safeTokenEquals('token', 'bad')).toBe(false);
   });
 });

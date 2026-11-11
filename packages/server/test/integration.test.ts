@@ -31,7 +31,8 @@ const dirs: string[] = [];
 
 async function startInstance(options: {
   name: string;
-  secret?: string;
+  roomId?: string;
+  omitRoomId?: boolean;
   out: string;
   port?: number;
   discovery?: boolean;
@@ -43,7 +44,7 @@ async function startInstance(options: {
   if (options.port !== undefined) args.push('--port', String(options.port));
   else args.push('--port', '0');
   if (!options.discovery) args.push('--no-discovery');
-  if (options.secret) args.push('--secret', options.secret);
+  if (!options.omitRoomId) args.push(options.roomId ?? '123456');
 
   const env: NodeJS.ProcessEnv = { ...process.env, LANFLY_NO_OPEN: '1' };
   if (options.useCliConfig) delete env.LANFLY_CONFIG_DIR;
@@ -204,8 +205,9 @@ describe('双实例集成', () => {
     const saved = new InputStore(bin);
     await saved.load();
     saved.data!.settings = { role: 'client', edge: 'left' };
-    saved.data!.paired = {
-      key: saved.publicKey,
+    saved.data!.target = {
+      id: saved.data!.id,
+      roomId: '123456',
       name: 'Saved configuration',
       host: '127.0.0.1',
       port: 8087,
@@ -218,11 +220,11 @@ describe('双实例集成', () => {
       cwd,
       useCliConfig: true,
     });
-    const result = await rpc<{ pairedName: string; enabled: boolean; settings: unknown }>(
+    const result = await rpc<{ targetName: string; enabled: boolean; settings: unknown }>(
       instance,
       'inputStatus',
     );
-    expect(result.data?.pairedName).toBe('Saved configuration');
+    expect(result.data?.targetName).toBe('Saved configuration');
     expect(result.data?.settings).toEqual({ role: 'client', edge: 'left' });
     expect(result.data?.enabled).toBe(false);
     await expect(access(path.join(cwd, 'data.json'))).rejects.toHaveProperty('code', 'ENOENT');
@@ -288,16 +290,16 @@ describe('双实例集成', () => {
     expect((await readFile(path.join(outB, 'empty.bin'))).length).toBe(0);
   });
 
-  it('不同密码的设备无法连接，相同密码可以连接', async () => {
+  it('不同 Room ID 的主机无法连接，相同 Room ID 可以连接', async () => {
     await access(CLI).catch(() => {
       throw new Error('未找到 dist/cli.js，请先运行 pnpm build');
     });
-    const a = await startInstance({ name: 'SecretA', secret: 'alpha', out: await newOutDir() });
-    const b = await startInstance({ name: 'SecretB', secret: 'beta', out: await newOutDir() });
-    const c = await startInstance({ name: 'SecretC', secret: 'alpha', out: await newOutDir() });
+    const a = await startInstance({ name: 'SecretA', roomId: 'alpha', out: await newOutDir() });
+    const b = await startInstance({ name: 'SecretB', roomId: 'beta', out: await newOutDir() });
+    const c = await startInstance({ name: 'SecretC', roomId: 'alpha', out: await newOutDir() });
 
     const denied = await connect(a, b);
-    expect(denied.error).toBe('SECRET_MISMATCH');
+    expect(denied.error).toBe('ROOM_MISMATCH');
 
     const accepted = await connect(a, c);
     expect(accepted.error).toBeUndefined();
@@ -306,6 +308,56 @@ describe('双实例集成', () => {
       return current.peers.find((peer) => peer.name === 'SecretA');
     });
     expect(cPeers.online).toBe(true);
+  });
+
+  it('Room ID 首次生成后持久化、重启沿用、显式覆盖后再次沿用，旧参数被移除', async () => {
+    const out = await newOutDir();
+    const a = await startInstance({ name: 'RandomRoom', omitRoomId: true, out });
+    const current = (await state(a)).self.roomId;
+    expect(current).toMatch(/^\d{6}$/);
+    expect(a.logs.join('')).toContain(`Room ID   ${current}`);
+    const file = path.join(out, 'config', 'data.json');
+    const initial = JSON.parse(await readFile(file, 'utf8')) as {
+      roomId: string;
+      input: { id: string };
+      browser: { key: string };
+    };
+    expect(initial.roomId).toBe(current);
+    const stop = async (instance: Instance) => {
+      await new Promise<void>((resolve) => {
+        instance.process.once('exit', () => resolve());
+        instance.process.kill('SIGTERM');
+      });
+    };
+    await stop(a);
+    const b = await startInstance({ name: 'SavedRoom', omitRoomId: true, out });
+    expect((await state(b)).self.roomId).toBe(current);
+    await stop(b);
+    const c = await startInstance({ name: 'OverrideRoom', roomId: '000123', out });
+    expect((await state(c)).self.roomId).toBe('000123');
+    await stop(c);
+    const d = await startInstance({ name: 'RestoredOverride', omitRoomId: true, out });
+    expect((await state(d)).self.roomId).toBe('000123');
+    const saved = JSON.parse(await readFile(file, 'utf8')) as typeof initial;
+    expect(saved.roomId).toBe('000123');
+    expect(saved.input.id).toBe(initial.input.id);
+    expect(saved.browser.key).toBe(initial.browser.key);
+
+    const result = await new Promise<{ code: number | null; text: string }>((resolve) => {
+      const child = spawn(process.execPath, [CLI, '--secret', 'removed'], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let text = '';
+      child.stdout?.on('data', (b: Buffer) => {
+        text += b;
+      });
+      child.stderr?.on('data', (b: Buffer) => {
+        text += b;
+      });
+      child.on('exit', (code) => resolve({ code, text }));
+    });
+    expect(result.code).toBe(1);
+    expect(result.text).toContain('--secret');
   });
 
   it('端口被占用时自动顺延', async () => {

@@ -41,8 +41,8 @@ export default function AddPeerDialog(props: {
         <div className="mt-2 min-h-4 text-[11px] text-red-40">{props.error}</div>
         <div className="mt-1 rounded-control border border-neutral-50 bg-neutral-20 px-2.5 py-2 text-[10.5px] leading-relaxed text-neutral-80">
           端口不是 8087 时请写成 <code className="text-neutral-100">IP:端口</code>
-          。密码房间需要双方使用相同的 <code className="text-neutral-100">--secret</code>
-          ；公开房间无法与密码房间互连。
+          。两台主机需使用相同的 <code className="text-neutral-100">Room ID</code>
+          ；不同 Room ID 的主机无法互连。
         </div>
         <DialogActions>
           <Button variant="secondary" disabled={props.busy} on:click={props.onClose}>

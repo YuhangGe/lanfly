@@ -21,7 +21,7 @@ import type { Application } from '../app';
 
 import { ErrorCodes, isActionFailure } from '../core/errors';
 import { clientAddress, HttpError, readBody, sendError, sendJson } from '../core/http';
-import { safeTokenEquals, verifySignedRequest } from '../core/security';
+import { safeTokenEquals, matchesRoom } from '../core/security';
 import { logger } from '../logger';
 import { finalizeFile, temporaryPath } from '../services/downloads';
 
@@ -34,6 +34,10 @@ export async function handlePeerRequest(
 ): Promise<void> {
   const host = clientAddress(request) || '0.0.0.0';
   const fullPath = `${pathname}${search}`;
+  if (!matchesRoom(app.identity.room, request.headers)) {
+    sendError(response, 401, 'ROOM_MISMATCH');
+    return;
+  }
 
   if (pathname.startsWith('/api/v1/peer/browser-upload/') && request.method === 'PUT') {
     try {
@@ -72,6 +76,15 @@ export async function handlePeerRequest(
       if (pathname.endsWith('/roster')) {
         app.network.acceptRoster(body, id);
         sendJson(response, 200, { from: app.identity.info, browsers: app.network.localRoster() });
+      } else if (pathname.endsWith('/request-file')) {
+        await app.network.requestFile(body, id);
+        sendJson(response, 200, { ok: true });
+      } else if (pathname.endsWith('/cancel-file')) {
+        app.network.cancelFile(body, id);
+        sendJson(response, 200, { ok: true });
+      } else if (pathname.endsWith('/cancel-offer')) {
+        app.network.cancelOffer(body, id);
+        sendJson(response, 200, { ok: true });
       } else if (pathname.endsWith('/receipt')) {
         app.network.receiveReceipt(body, id);
         sendJson(response, 200, { ok: true });
@@ -217,19 +230,10 @@ async function readJsonAuthorized(
 function authorize(
   app: Application,
   request: IncomingMessage,
-  fullPath: string,
-  body: Buffer,
+  _fullPath: string,
+  _body: Buffer,
 ): boolean {
-  const room = app.identity.room;
-  if (!room) return true;
-  return (
-    verifySignedRequest(
-      room,
-      request.headers,
-      { method: request.method ?? 'GET', path: fullPath, body },
-      app.replayGuard,
-    ) !== null
-  );
+  return matchesRoom(app.identity.room, request.headers);
 }
 
 async function handleIncomingUpload(

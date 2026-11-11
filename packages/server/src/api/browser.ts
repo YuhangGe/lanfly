@@ -18,7 +18,6 @@ import { HttpError, readBody, sendError, sendJson } from '../core/http';
 const joinSchema = z.object({
   token: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
   name: z.string().trim().min(1).max(64),
-  password: z.string().max(1024).optional(),
 });
 
 /** Browser actions have their own allowlist and never dispatch host administration/native-input actions. */
@@ -39,12 +38,7 @@ export async function handleBrowserRequest(
       const input = joinSchema.parse(
         JSON.parse((await readBody(request, JSON_BODY_LIMIT)).toString('utf8')),
       );
-      const result = app.network.join(
-        input.token,
-        input.name,
-        input.password,
-        request.headers.cookie,
-      );
+      const result = app.network.join(input.token, input.name);
       response.setHeader('set-cookie', result.cookie);
       sendJson(response, 200, { id: result.id });
       return;

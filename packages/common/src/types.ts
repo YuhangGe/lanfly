@@ -4,8 +4,8 @@ export interface PeerInfo {
   name: string;
   port: number;
   version: string;
-  /** 该设备是否启用了 --secret 密码房间。 */
-  secret: boolean;
+  /** 原生主机组网 ID，仅隔离连接，不加密数据。 */
+  roomId: string;
   /** 浏览器设备通过所属主机转发。 */
   kind?: 'browser';
   gatewayId?: string;
@@ -76,6 +76,7 @@ export interface TransferView {
   expiresAt?: number;
   downloadedAt?: number;
   expired?: boolean;
+  deferred?: boolean;
 }
 
 export interface AppState {
@@ -87,6 +88,14 @@ export interface AppState {
 
 export interface SendFileResult {
   transferId: string;
+  uploadUrl: string;
+  deferred?: boolean;
+  expiresAt?: number;
+}
+
+export interface FileUploadRequest {
+  transferId: string;
+  sessionId: string;
   uploadUrl: string;
 }
 

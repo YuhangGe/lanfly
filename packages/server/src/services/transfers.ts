@@ -74,6 +74,7 @@ export class TransferStore {
         | 'expiresAt'
         | 'downloadedAt'
         | 'expired'
+        | 'deferred'
       >
     >,
   ): TransferRecord | undefined {
@@ -161,5 +162,6 @@ export function viewOf(transfer: TransferRecord): TransferView {
     expiresAt: transfer.expiresAt,
     downloadedAt: transfer.downloadedAt,
     expired: transfer.expired,
+    deferred: transfer.deferred,
   };
 }

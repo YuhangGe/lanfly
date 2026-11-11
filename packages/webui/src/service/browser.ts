@@ -43,20 +43,15 @@ export function browserName(): string {
   return stored('lanfly.browser.name') || `${platform} 浏览器`;
 }
 
-export async function joinBrowser(name: string, password?: string): Promise<void> {
+export async function joinBrowser(name: string): Promise<void> {
   const response = await fetch('/api/v1/browser/join', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ token, name, password }),
+    body: JSON.stringify({ token, name }),
     credentials: 'same-origin',
   });
   if (!response.ok)
-    throw Object.assign(
-      new Error(
-        response.status === 401 ? '请输入正确的房间密码' : '无法接入，请确认 lanfly 仍在运行',
-      ),
-      { status: response.status },
-    );
+    throw Object.assign(new Error('无法接入，请确认 lanfly 仍在运行'), { status: response.status });
   remember('lanfly.browser.name', name);
 }
 

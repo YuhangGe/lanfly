@@ -7,7 +7,6 @@ import {
   transferIdInput,
   inputSettingsSchema,
   inputConnectSchema,
-  inputConfirmSchema,
 } from '@lanfly/common';
 
 import { defineAction, type ServerAction } from '../core/action';
@@ -48,12 +47,10 @@ export const inputConfigure = defineAction(inputSettingsSchema, async ({ app }, 
 );
 export const inputEnable = defineAction(async ({ app }) => app.input.enable());
 export const inputDisable = defineAction(async ({ app }) => app.input.disable());
-export const inputPairing = defineAction(async ({ app }) => app.input.openPairing());
-export const inputConnect = defineAction(inputConnectSchema, async ({ app }, { peerId }) =>
-  app.input.connect(app.peerTarget(peerId)),
-);
-export const inputConfirm = defineAction(inputConfirmSchema, async ({ app }, { code }) =>
-  app.input.confirm(code),
+export const inputConnect = defineAction(
+  inputConnectSchema,
+  async ({ app }, { peerId, role, edge }) =>
+    app.input.connect(app.peerTarget(peerId), { role, edge }),
 );
 export const inputForget = defineAction(async ({ app }) => app.input.forget());
 
@@ -72,9 +69,7 @@ export const actions = {
   inputConfigure,
   inputEnable,
   inputDisable,
-  inputPairing,
   inputConnect,
-  inputConfirm,
   inputForget,
 } satisfies Record<string, ServerAction>;
 

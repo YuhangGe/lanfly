@@ -36,7 +36,7 @@ export class Identity {
   readonly name: string;
   readonly version = VERSION;
   readonly downloadsDir: string;
-  readonly room: Room | undefined;
+  readonly room: Room;
   readonly host = primaryIPv4();
   port: number;
 
@@ -44,11 +44,11 @@ export class Identity {
     this.name = config.name;
     this.port = config.port;
     this.downloadsDir = config.outDir;
-    this.room = createRoom(config.secret);
+    this.room = createRoom(config.roomId);
   }
 
-  get secret(): boolean {
-    return this.room !== undefined;
+  get roomId(): string {
+    return this.room.id;
   }
 
   get info(): PeerInfo {
@@ -57,7 +57,7 @@ export class Identity {
       name: this.name,
       port: this.port,
       version: this.version,
-      secret: this.secret,
+      roomId: this.roomId,
     };
   }
 

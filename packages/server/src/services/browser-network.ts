@@ -10,10 +10,9 @@ import {
   type PeerView,
   type SendFileResult,
 } from '@lanfly/common';
-import { createHmac } from 'node:crypto';
-import { createReadStream, createWriteStream } from 'node:fs';
-import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import os from 'node:os';
+import { createHmac, randomUUID } from 'node:crypto';
+import { createWriteStream } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import path from 'node:path';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -25,13 +24,14 @@ import { throwActionError } from '../core/errors';
 import { HttpError, sendJson } from '../core/http';
 import { randomToken, safeTokenEquals, sha256 } from '../core/security';
 import { logger } from '../logger';
+import { DownloadRelay } from './download-relay';
 import { finalizeFile, sanitizeFileName, temporaryPath } from './downloads';
 import { EventHub } from './events';
 import { MessageStore } from './messages';
-import { TransferStore, type TransferRecord } from './transfers';
+import { TransferStore } from './transfers';
 
 const ONLINE_GRACE = 15_000;
-export const BROWSER_FILE_TTL = 30 * 60_000;
+export const BROWSER_OFFER_TTL = 30 * 60_000;
 const browserSchema = peerInfoSchema.extend({
   kind: z.literal('browser'),
   gatewayId: z.string().max(64),
@@ -61,9 +61,19 @@ type IncomingFile = {
   token: string;
   receiving: boolean;
   expiresAt?: number;
-  path?: string;
+  active?: { id: string; relay: DownloadRelay };
+  canceled?: boolean;
 };
-type OutgoingFile = { owner: string; gateway: string; token: string };
+type OutgoingFile = {
+  owner: string;
+  gateway: string;
+  token: string;
+  deferred: boolean;
+  expiresAt?: number;
+  sessionId?: string;
+  canceled?: boolean;
+  completion?: Promise<void>;
+};
 
 /** Browser leaves only travel across a direct native peer connection; remote rosters are never re-advertised. */
 export class BrowserNetwork {
@@ -71,7 +81,7 @@ export class BrowserNetwork {
   readonly remoteBrowsers = new Map<string, { at: number; peers: BrowserAnnouncement[] }>();
   readonly incoming = new Map<string, IncomingFile>();
   readonly outgoing = new Map<string, OutgoingFile>();
-  cacheDir = '';
+  downloadWaitTimeoutMs = 30_000;
   #key = '';
   #abort = new AbortController();
   #timer?: NodeJS.Timeout;
@@ -91,39 +101,10 @@ export class BrowserNetwork {
       .parse(storage.get('browser'));
     this.#key = saved?.key ?? randomToken();
     if (!saved) await storage.set('browser', { key: this.#key });
-    const cacheId = sha256(storage.file).toString('hex').slice(0, 24);
-    const root = path.join(os.tmpdir(), 'lanfly-browser', cacheId);
-    await mkdir(root, { recursive: true, mode: 0o700 });
-    this.cacheDir = path.join(root, String(this.app.identity.port));
-    // Keep caches belonging to other live instances, clear abandoned caches even if the port changed.
-    for (const entry of await readdir(root, { withFileTypes: true })) {
-      if (!entry.isDirectory()) continue;
-      const directory = path.join(root, entry.name);
-      let alive = false;
-      try {
-        const owner = z
-          .object({ pid: z.number().int().positive() })
-          .parse(JSON.parse(await readFile(path.join(directory, 'owner.json'), 'utf8')));
-        try {
-          process.kill(owner.pid, 0);
-          alive = true;
-        } catch (error) {
-          alive = (error as NodeJS.ErrnoException).code === 'EPERM';
-        }
-      } catch {
-        /* Missing owner metadata is an abandoned cache. */
-      }
-      if (!alive || directory === this.cacheDir)
-        await rm(directory, { recursive: true, force: true });
-    }
-    await mkdir(this.cacheDir, { recursive: true, mode: 0o700 });
-    await writeFile(path.join(this.cacheDir, 'owner.json'), JSON.stringify({ pid: process.pid }), {
-      mode: 0o600,
-    });
     this.#timer = setInterval(() => {
       this.publishPeers();
       this.#track(this.sync());
-      this.#track(this.expireFiles());
+      this.#track(this.expireOffers());
     }, 2_000);
     this.#timer.unref();
   }
@@ -139,12 +120,13 @@ export class BrowserNetwork {
     this.#stopped = true;
     this.#abort.abort();
     clearInterval(this.#timer);
+    for (const incoming of this.incoming.values()) incoming.active?.relay.fail('TRANSFER_CANCELED');
+    for (const [id, route] of this.outgoing) this.#inbox(route.owner).transfers.get(id)?.cancel?.();
     for (const browser of this.browsers.values()) {
       for (const transfer of browser.transfers.active()) transfer.cancel?.();
       browser.events.stop();
     }
     await Promise.allSettled(this.#pending);
-    if (this.cacheDir) await rm(this.cacheDir, { recursive: true, force: true });
   }
 
   get cookieName(): string {
@@ -152,30 +134,10 @@ export class BrowserNetwork {
   }
 
   #signature(token: string): string {
-    return createHmac('sha256', this.#key)
-      .update(`${token}:${this.app.identity.room?.tag.toString('hex') ?? 'public'}`)
-      .digest('base64url');
+    return createHmac('sha256', this.#key).update(token).digest('base64url');
   }
 
-  join(
-    token: string,
-    name: string,
-    password?: string,
-    cookie?: string,
-  ): { id: string; cookie: string } {
-    const existing = cookie
-      ?.split(';')
-      .map((v) => v.trim())
-      .find((v) => v.startsWith(`${this.cookieName}=`))
-      ?.slice(this.cookieName.length + 1);
-    const remembered =
-      !!existing && safeTokenEquals(existing, `${token}.${this.#signature(token)}`);
-    if (
-      this.app.config.secret &&
-      !remembered &&
-      password?.normalize('NFKC') !== this.app.config.secret.normalize('NFKC')
-    )
-      throw new HttpError(401, 'ROOM_PASSWORD_REQUIRED');
+  join(token: string, name: string): { id: string; cookie: string } {
     const id = `web-${sha256(token).toString('hex').slice(0, 40)}`;
     let browser = this.browsers.get(id);
     if (!browser) {
@@ -367,7 +329,11 @@ export class BrowserNetwork {
 
   acceptRoster(value: unknown, senderId: string): void {
     const payload = rosterSchema.parse(value);
-    if (payload.from.id !== senderId || !this.app.peers.get(senderId))
+    if (
+      payload.from.id !== senderId ||
+      payload.from.roomId !== this.app.identity.roomId ||
+      !this.app.peers.get(senderId)
+    )
       throw new HttpError(403, 'DIRECT_PEER_REQUIRED');
     const seen = new Set<string>();
     for (const b of payload.browsers) {
@@ -375,7 +341,7 @@ export class BrowserNetwork {
         !b.id.startsWith('web-') ||
         b.gatewayId !== senderId ||
         seen.has(b.id) ||
-        b.secret !== this.app.identity.secret ||
+        b.roomId !== this.app.identity.roomId ||
         this.browsers.has(b.id) ||
         this.app.peers.get(b.id)
       )
@@ -438,7 +404,12 @@ export class BrowserNetwork {
 
   receive(value: unknown, gateway: string): { ok: true } | { token: string } {
     const payload = deliverySchema.parse(value);
-    if (payload.from.id !== gateway) throw new HttpError(403, 'INVALID_SENDER');
+    if (
+      payload.from.id !== gateway ||
+      payload.from.roomId !== this.app.identity.roomId ||
+      payload.sender.roomId !== this.app.identity.roomId
+    )
+      throw new HttpError(403, 'INVALID_SENDER');
     if (gateway !== this.app.identity.id) {
       if (!this.app.peers.get(gateway)) throw new HttpError(403, 'DIRECT_PEER_REQUIRED');
       this.acceptRoster({ from: payload.from, browsers: payload.browsers }, gateway);
@@ -467,12 +438,22 @@ export class BrowserNetwork {
     const token = randomToken();
     recipient.transfers.createIncoming(payload.sender.id, payload.id, file, token);
     recipient.messages.addIncomingFile(payload.sender.id, file, payload.id);
+    const expiresAt =
+      payload.to !== this.app.identity.id ? Date.now() + BROWSER_OFFER_TTL : undefined;
+    if (expiresAt)
+      recipient.transfers.update(payload.id, {
+        status: 'ready',
+        deferred: true,
+        expiresAt,
+        downloadUrl: `/api/v1/browser/download/${payload.id}`,
+      });
     this.incoming.set(payload.id, {
       destination: payload.to,
       sender: payload.sender.id,
       gateway,
       token,
       receiving: false,
+      expiresAt,
     });
     return { token };
   }
@@ -483,6 +464,16 @@ export class BrowserNetwork {
     inbox.messages.addOutgoingFile(peerId, file, transfer.id);
     try {
       const gateway = this.#gateway(peerId);
+      const deferred = this.peers().some((p) => p.id === peerId && p.kind === 'browser');
+      const route: OutgoingFile = {
+        owner,
+        gateway,
+        token: '',
+        deferred,
+        expiresAt: deferred ? Date.now() + BROWSER_OFFER_TTL : undefined,
+      };
+      // Register before delivering the offer: the recipient may click immediately.
+      this.outgoing.set(transfer.id, route);
       const result = z.object({ token: z.string() }).parse(
         await this.#deliver({
           from: this.app.identity.info,
@@ -492,18 +483,96 @@ export class BrowserNetwork {
           file,
         }),
       );
-      this.outgoing.set(transfer.id, { owner, gateway, token: result.token });
-      inbox.transfers.update(transfer.id, { status: 'ready' });
+      route.token = result.token;
+      inbox.transfers.update(transfer.id, {
+        status: route.sessionId ? 'sending' : 'ready',
+        deferred,
+        expiresAt: route.expiresAt,
+      });
       return {
         transferId: transfer.id,
-        uploadUrl: `${owner === this.app.identity.id ? '/api/v1/local/upload/' : '/api/v1/browser/upload/'}${transfer.id}`,
+        uploadUrl: this.#uploadUrl(owner, transfer.id),
+        deferred,
+        expiresAt: route.expiresAt,
       };
     } catch (error) {
+      this.outgoing.delete(transfer.id);
       inbox.transfers.fail(transfer.id, 'PEER_UNREACHABLE');
       inbox.messages.setFileStatusByTransfer(transfer.id, 'failed', 'PEER_UNREACHABLE');
-      logger.debug(`发送浏览器文件失败：${String(error)}`);
+      logger.debug(`发送文件邀请失败：${String(error)}`);
       throwActionError('PEER_UNREACHABLE');
     }
+  }
+
+  #uploadUrl(owner: string, id: string, sessionId?: string): string {
+    return `${owner === this.app.identity.id ? '/api/v1/local/upload/' : '/api/v1/browser/upload/'}${id}${sessionId ? `?session=${sessionId}` : ''}`;
+  }
+
+  async requestFile(value: unknown, gateway: string): Promise<void> {
+    const { id, sessionId } = z
+      .object({ id: z.string().uuid(), sessionId: z.string().uuid() })
+      .parse(value);
+    const route = this.outgoing.get(id);
+    if (
+      !route ||
+      route.gateway !== gateway ||
+      !route.deferred ||
+      route.canceled ||
+      route.expiresAt! <= Date.now()
+    )
+      throw new HttpError(410, 'FILE_EXPIRED');
+    if (route.completion) await route.completion;
+    if (route.canceled || route.expiresAt! <= Date.now()) throw new HttpError(410, 'FILE_EXPIRED');
+    if (route.sessionId) throw new HttpError(409, 'TRANSFER_STATE');
+    const inbox = this.#inbox(route.owner);
+    if (!inbox.events.connections) throw new HttpError(409, 'FILE_SOURCE_UNAVAILABLE');
+    route.sessionId = sessionId;
+    inbox.transfers.update(id, { status: 'sending', error: undefined });
+    inbox.transfers.progress(id, 0, true);
+    inbox.messages.setFileStatusByTransfer(id, 'sending');
+    inbox.events.broadcast('file-upload-request', {
+      transferId: id,
+      sessionId,
+      uploadUrl: this.#uploadUrl(route.owner, id, sessionId),
+    });
+  }
+
+  cancelFile(value: unknown, gateway: string): void {
+    const { id, sessionId } = z
+      .object({ id: z.string().uuid(), sessionId: z.string().uuid() })
+      .parse(value);
+    const route = this.outgoing.get(id);
+    if (!route || route.gateway !== gateway || route.sessionId !== sessionId) return;
+    route.sessionId = undefined;
+    const inbox = this.#inbox(route.owner);
+    inbox.transfers.get(id)?.cancel?.();
+    if (!route.canceled) inbox.transfers.fail(id, 'TRANSFER_CANCELED');
+    inbox.messages.setFileStatusByTransfer(id, 'failed', 'TRANSFER_CANCELED');
+    inbox.events.broadcast('file-upload-cancel', { transferId: id, sessionId });
+  }
+
+  async #requestSource(id: string, incoming: IncomingFile, sessionId: string): Promise<void> {
+    if (incoming.gateway === this.app.identity.id)
+      await this.requestFile({ id, sessionId }, incoming.gateway);
+    else
+      await this.app.remote.browserRequest(
+        this.app.peerTarget(incoming.gateway),
+        'request-file',
+        { id, sessionId },
+        this.#abort.signal,
+      );
+  }
+
+  async #cancelSource(id: string, incoming: IncomingFile, sessionId: string): Promise<void> {
+    if (incoming.gateway === this.app.identity.id)
+      this.cancelFile({ id, sessionId }, incoming.gateway);
+    else
+      await this.app.remote.browserRequest(
+        this.app.peerTarget(incoming.gateway),
+        'cancel-file',
+        { id, sessionId },
+        this.#abort.signal,
+      );
   }
 
   async upload(
@@ -515,9 +584,23 @@ export class BrowserNetwork {
     const route = this.outgoing.get(id);
     const inbox = this.#inbox(owner);
     const transfer = inbox.transfers.get(id);
-    if (!route || route.owner !== owner || !transfer || transfer.status !== 'ready')
+    const sessionId =
+      new URL(request.url ?? '/', 'http://localhost').searchParams.get('session') ?? undefined;
+    if (
+      !route ||
+      route.owner !== owner ||
+      !transfer ||
+      route.canceled ||
+      (route.deferred ? !sessionId || route.sessionId !== sessionId : transfer.status !== 'ready')
+    )
       throw new HttpError(409, 'TRANSFER_STATE');
-    inbox.transfers.update(id, { status: 'sending' });
+    if (route.deferred && transfer.uploading) throw new HttpError(409, 'TRANSFER_STATE');
+    transfer.uploading = true;
+    let resolveCompletion!: () => void;
+    route.completion = new Promise<void>((resolve) => {
+      resolveCompletion = resolve;
+    });
+    inbox.transfers.update(id, { status: 'sending', error: undefined });
     try {
       const declared = request.headers['content-length'];
       if (declared !== undefined && Number(declared) !== transfer.file.size)
@@ -529,7 +612,7 @@ export class BrowserNetwork {
           request,
           response,
           (bytes) => inbox.transfers.progress(id, bytes),
-          transfer,
+          () => inbox.transfers.setCancel(id, () => request.destroy()),
         );
       } else {
         const { request: remote, done } = this.app.remote.openUpload(
@@ -537,9 +620,8 @@ export class BrowserNetwork {
           id,
           route.token,
           transfer.file.size,
-          `/api/v1/peer/browser-upload/${id}`,
+          `/api/v1/peer/browser-upload/${id}${sessionId ? `?session=${sessionId}` : ''}`,
         );
-        // Observe rejection immediately, including while the streaming pipeline is active.
         void done.catch(() => {});
         inbox.transfers.setCancel(id, () => {
           remote.destroy();
@@ -560,23 +642,37 @@ export class BrowserNetwork {
           throw new Error('FILE_SIZE_MISMATCH');
         }
         const result = await done;
-        if (result.status !== 200 || bytes !== transfer.file.size)
-          throw new Error('TRANSFER_UPLOAD_FAILED');
+        if (result.status !== 200) throw new Error('TRANSFER_UPLOAD_FAILED');
         const receipt = z
-          .object({ expiresAt: z.number().optional() })
+          .object({ downloadedAt: z.number().optional() })
           .parse(JSON.parse(result.body));
-        if (receipt.expiresAt) inbox.transfers.update(id, { expiresAt: receipt.expiresAt });
+        if (receipt.downloadedAt)
+          inbox.transfers.update(id, { downloadedAt: receipt.downloadedAt });
         sendJson(response, 200, { ok: true });
       }
       inbox.transfers.complete(id);
       inbox.messages.setFileStatusByTransfer(id, 'sent');
     } catch (error) {
-      inbox.transfers.fail(id, 'TRANSFER_UPLOAD_FAILED');
-      inbox.messages.setFileStatusByTransfer(id, 'failed', 'TRANSFER_UPLOAD_FAILED');
+      if (inbox.transfers.get(id)?.status !== 'canceled') {
+        inbox.transfers.fail(id, 'TRANSFER_UPLOAD_FAILED');
+        inbox.messages.setFileStatusByTransfer(id, 'failed', 'TRANSFER_UPLOAD_FAILED');
+      }
+      const active = this.incoming.get(id)?.active;
+      if (
+        route.deferred &&
+        route.gateway === this.app.identity.id &&
+        active &&
+        active.id === sessionId
+      )
+        active.relay.fail('TRANSFER_UPLOAD_FAILED');
       throw error;
     } finally {
+      delete transfer.uploading;
       inbox.transfers.clearCancel(id);
-      if (inbox.transfers.get(id)?.status !== 'completed') this.outgoing.delete(id);
+      if (route.sessionId === sessionId) route.sessionId = undefined;
+      if (!route.deferred) this.outgoing.delete(id);
+      route.completion = undefined;
+      resolveCompletion();
     }
   }
 
@@ -586,29 +682,48 @@ export class BrowserNetwork {
     request: IncomingMessage,
     response: ServerResponse,
     progress?: (bytes: number) => void,
-    source?: TransferRecord,
+    onStart?: () => void,
   ): Promise<void> {
     const incoming = this.incoming.get(id);
     if (!incoming || !safeTokenEquals(token, incoming.token))
       throw new HttpError(403, 'TRANSFER_TOKEN_INVALID');
     const inbox = this.#inbox(incoming.destination);
     const transfer = inbox.transfers.get(id)!;
-    if (incoming.receiving || transfer.status !== 'receiving')
-      throw new HttpError(409, 'TRANSFER_STATE');
+    if (incoming.canceled || incoming.receiving) throw new HttpError(409, 'TRANSFER_STATE');
+    if (incoming.destination !== this.app.identity.id) {
+      const sessionId = new URL(request.url ?? '/', 'http://localhost').searchParams.get('session');
+      const active = incoming.active;
+      if (!active || active.id !== sessionId) throw new HttpError(409, 'TRANSFER_STATE');
+      incoming.receiving = true;
+      onStart?.();
+      try {
+        await active.relay.upload(request, (bytes) => {
+          inbox.transfers.progress(id, bytes);
+          progress?.(bytes);
+        });
+        const downloadedAt = Date.now();
+        inbox.transfers.complete(id);
+        inbox.transfers.update(id, { downloadedAt });
+        this.#track(this.#notifyReceipt(id, incoming, { downloadedAt }));
+        sendJson(response, 200, { ok: true, downloadedAt });
+      } finally {
+        incoming.receiving = false;
+      }
+      return;
+    }
+    // PC is the final recipient: stream directly into its download directory.
+    if (transfer.status !== 'receiving') throw new HttpError(409, 'TRANSFER_STATE');
     const declared = request.headers['content-length'];
     if (declared !== undefined && Number(declared) !== transfer.file.size)
       throw new HttpError(400, 'FILE_SIZE_MISMATCH');
     incoming.receiving = true;
-    const browser = incoming.destination !== this.app.identity.id;
-    const directory = browser ? this.cacheDir : this.app.identity.downloadsDir;
-    const temporary = temporaryPath(directory, id);
+    const temporary = temporaryPath(this.app.identity.downloadsDir, id);
     const stream = createWriteStream(temporary, { flags: 'wx', mode: 0o600 });
-    const cancel = () => {
+    inbox.transfers.setCancel(id, () => {
       request.destroy();
       stream.destroy();
-    };
-    inbox.transfers.setCancel(id, cancel);
-    if (source) this.#inbox(this.outgoing.get(id)!.owner).transfers.setCancel(id, cancel);
+    });
+    onStart?.();
     let bytes = 0;
     const meter = new Transform({
       transform(chunk: Buffer, _encoding, callback) {
@@ -623,29 +738,20 @@ export class BrowserNetwork {
       try {
         await pipeline(request, meter, stream);
         if (bytes !== transfer.file.size) throw new Error('FILE_SIZE_MISMATCH');
-        incoming.path = browser
-          ? path.join(directory, id)
-          : await finalizeFile(temporary, directory, transfer.file.name);
-        if (browser) {
-          await rename(temporary, incoming.path);
-          incoming.expiresAt = Date.now() + BROWSER_FILE_TTL;
-          inbox.transfers.update(id, {
-            downloadUrl: `/api/v1/browser/download/${id}`,
-            expiresAt: incoming.expiresAt,
-          });
-          if (source)
-            this.#inbox(this.outgoing.get(id)!.owner).transfers.update(id, {
-              expiresAt: incoming.expiresAt,
-            });
-        }
-        inbox.transfers.complete(id, browser ? undefined : path.basename(incoming.path));
-        sendJson(response, 200, { ok: true, expiresAt: incoming.expiresAt });
+        const finalPath = await finalizeFile(
+          temporary,
+          this.app.identity.downloadsDir,
+          transfer.file.name,
+        );
+        inbox.transfers.complete(id, path.basename(finalPath));
+        sendJson(response, 200, { ok: true });
       } catch (error) {
         inbox.transfers.fail(id, 'TRANSFER_UPLOAD_FAILED');
         await rm(temporary, { force: true });
         throw error;
       } finally {
         inbox.transfers.clearCancel(id);
+        this.incoming.delete(id);
       }
     })();
     this.#pending.add(job);
@@ -658,52 +764,67 @@ export class BrowserNetwork {
 
   async download(owner: string, id: string, response: ServerResponse): Promise<void> {
     const incoming = this.incoming.get(id);
-    if (!incoming || incoming.destination !== owner || !incoming.path || !incoming.expiresAt)
+    if (!incoming || incoming.destination !== owner || !incoming.expiresAt || incoming.canceled)
       throw new HttpError(404, 'FILE_NOT_FOUND');
-    if (incoming.expiresAt <= Date.now()) {
-      await this.expireFiles();
-      throw new HttpError(410, 'FILE_EXPIRED');
-    }
+    if (incoming.expiresAt <= Date.now()) throw new HttpError(410, 'FILE_EXPIRED');
+    if (incoming.active) throw new HttpError(409, 'TRANSFER_STATE');
     const inbox = this.#inbox(owner);
     const transfer = inbox.transfers.get(id)!;
-    response.writeHead(200, {
-      'content-type': 'application/octet-stream',
-      'content-length': transfer.file.size,
-      'content-disposition': `attachment; filename="download"; filename*=UTF-8''${encodeURIComponent(transfer.file.name).replace(/'/g, '%27')}`,
-      'cache-control': 'no-store',
+    const sessionId = randomUUID();
+    const relay = new DownloadRelay(transfer.file, response, this.downloadWaitTimeoutMs, (code) => {
+      inbox.transfers.fail(id, code);
+      this.#track(this.#cancelSource(id, incoming, sessionId));
     });
-    await pipeline(createReadStream(incoming.path), response);
-    const downloadedAt = Date.now();
-    inbox.transfers.update(id, { downloadedAt });
-    this.#track(this.#notifyReceipt(id, incoming, { downloadedAt }));
+    incoming.active = { id: sessionId, relay };
+    inbox.transfers.update(id, { status: 'receiving', error: undefined });
+    inbox.transfers.progress(id, 0, true);
+    this.#pending.add(relay.done);
+    try {
+      try {
+        await this.#requestSource(id, incoming, sessionId);
+      } catch {
+        relay.fail('FILE_SOURCE_UNAVAILABLE');
+      }
+      await relay.done;
+    } finally {
+      this.#pending.delete(relay.done);
+      if (incoming.active?.id === sessionId) incoming.active = undefined;
+    }
   }
 
-  async expireFiles(now = Date.now()): Promise<void> {
+  async expireOffers(now = Date.now()): Promise<void> {
     for (const [id, incoming] of this.incoming) {
-      if (!incoming.expiresAt || incoming.expiresAt > now || !incoming.path) continue;
-      const expiredPath = incoming.path;
-      delete incoming.path;
-      await rm(expiredPath, { force: true });
+      if (!incoming.expiresAt || incoming.expiresAt > now || incoming.active || incoming.canceled)
+        continue;
       this.#inbox(incoming.destination).transfers.update(id, {
         downloadUrl: undefined,
         expired: true,
       });
+      incoming.canceled = true;
       await this.#notifyReceipt(id, incoming, { expired: true }).catch(() => {});
+    }
+    for (const [id, route] of this.outgoing) {
+      if (!route.expiresAt || route.expiresAt > now || route.sessionId || route.canceled) continue;
+      route.canceled = true;
+      const inbox = this.#inbox(route.owner);
+      inbox.transfers.update(id, { expired: true });
+      inbox.events.broadcast('file-offer-ended', { transferId: id });
     }
   }
 
   async #notifyReceipt(
     id: string,
     incoming: IncomingFile,
-    patch: { downloadedAt?: number; expired?: boolean },
+    patch: { downloadedAt?: number; expired?: boolean; canceled?: boolean },
   ): Promise<void> {
-    const receipt = { id, ...patch };
-    if (incoming.gateway === this.app.identity.id) this.receiveReceipt(receipt, incoming.gateway);
+    if (incoming.gateway === this.app.identity.id)
+      this.receiveReceipt({ id, ...patch }, incoming.gateway);
     else
       await this.app.remote.browserRequest(
         this.app.peerTarget(incoming.gateway),
         'receipt',
-        receipt,
+        { id, ...patch },
+        this.#abort.signal,
       );
   }
 
@@ -713,21 +834,67 @@ export class BrowserNetwork {
         id: z.string().uuid(),
         downloadedAt: z.number().int().positive().optional(),
         expired: z.literal(true).optional(),
+        canceled: z.literal(true).optional(),
       })
       .parse(value);
     const route = this.outgoing.get(receipt.id);
     if (!route || route.gateway !== gateway) throw new HttpError(403, 'INVALID_RECEIPT');
-    this.#inbox(route.owner).transfers.update(receipt.id, {
+    const inbox = this.#inbox(route.owner);
+    inbox.transfers.update(receipt.id, {
       ...(receipt.downloadedAt ? { downloadedAt: receipt.downloadedAt } : {}),
       ...(receipt.expired ? { expired: true } : {}),
+      ...(receipt.canceled ? { status: 'canceled' } : {}),
+    });
+    if (receipt.canceled)
+      inbox.messages.setFileStatusByTransfer(receipt.id, 'failed', 'TRANSFER_CANCELED');
+    if (receipt.expired || receipt.canceled) {
+      route.canceled = true;
+      inbox.events.broadcast('file-offer-ended', { transferId: receipt.id });
+    }
+  }
+
+  cancelOffer(value: unknown, gateway: string): void {
+    const { id } = z.object({ id: z.string().uuid() }).parse(value);
+    const incoming = this.incoming.get(id);
+    if (!incoming || incoming.gateway !== gateway) throw new HttpError(403, 'TRANSFER_NOT_FOUND');
+    this.#cancelIncoming(id, incoming);
+  }
+
+  #cancelIncoming(id: string, incoming: IncomingFile): void {
+    incoming.canceled = true;
+    incoming.active?.relay.fail('TRANSFER_CANCELED');
+    this.#inbox(incoming.destination).transfers.update(id, {
+      status: 'canceled',
+      downloadUrl: undefined,
     });
   }
 
   cancel(owner: string, id: string): void {
     const inbox = this.#inbox(owner);
     if (!inbox.transfers.get(id)) throw new HttpError(404, 'TRANSFER_NOT_FOUND');
+    const route = this.outgoing.get(id);
+    if (route?.owner === owner && route.deferred) {
+      route.canceled = true;
+      if (route.sessionId) this.cancelFile({ id, sessionId: route.sessionId }, route.gateway);
+      inbox.events.broadcast('file-offer-ended', { transferId: id });
+      if (route.gateway === this.app.identity.id) this.cancelOffer({ id }, route.gateway);
+      else
+        this.#track(
+          this.app.remote.browserRequest(
+            this.app.peerTarget(route.gateway),
+            'cancel-offer',
+            { id },
+            this.#abort.signal,
+          ),
+        );
+    }
+    const incoming = this.incoming.get(id);
+    if (incoming?.destination === owner && incoming.expiresAt) {
+      this.#cancelIncoming(id, incoming);
+      this.#track(this.#notifyReceipt(id, incoming, { canceled: true }));
+    }
     inbox.transfers.get(id)?.cancel?.();
-    inbox.transfers.cancel(id);
+    inbox.transfers.update(id, { status: 'canceled' });
     inbox.messages.setFileStatusByTransfer(id, 'failed', 'TRANSFER_CANCELED');
   }
 }

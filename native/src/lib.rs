@@ -7,10 +7,16 @@ mod cursor;
 mod keyboard;
 
 #[cfg(any(target_os = "macos", test))]
+mod input_source;
+
+#[cfg(any(target_os = "macos", test))]
 mod startup;
 
 #[cfg(target_os = "macos")]
 mod macos;
+
+#[cfg(target_os = "macos")]
+mod macos_input_source;
 
 fn status(mut cx: FunctionContext) -> JsResult<JsString> {
     #[cfg(target_os = "macos")]

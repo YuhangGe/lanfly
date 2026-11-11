@@ -21,6 +21,7 @@ function fileIcon(name: string): string {
 }
 
 function isActive(transfer: TransferView | undefined): boolean {
+  if (transfer?.expired) return false;
   return (
     transfer?.status === 'offering' ||
     transfer?.status === 'ready' ||
@@ -42,23 +43,27 @@ function errorLabel(code: string): string {
 
 function transferLabel(transfer: TransferView | undefined): string {
   if (!transfer) return '文件';
+  if (transfer.expired) return '下载邀请已过期';
   switch (transfer.status) {
     case 'offering':
       return '等待对方确认…';
     case 'ready':
-      return '准备发送…';
+      return transfer.deferred
+        ? transfer.direction === 'out'
+          ? '等待对方下载 · 邀请有效 30 分钟'
+          : '点击下载 · 发送页面需在线'
+        : '准备发送…';
     case 'sending':
       return transfer.direction === 'out' ? '发送中…' : '接收中…';
     case 'receiving':
       return '接收中…';
     case 'completed':
-      if (transfer.expired) return '下载已过期';
       if (transfer.direction === 'out') {
         if (!transfer.expiresAt) return '已送达';
-        return transfer.downloadedAt ? '对方已下载' : '可下载 · 保留 30 分钟';
+        return transfer.downloadedAt ? '对方已下载' : '等待对方下载';
       }
       if (!transfer.downloadUrl) return '已保存到下载目录';
-      return transfer.downloadedAt ? '已下载 · 30 分钟内可重复下载' : '可下载 · 保留 30 分钟';
+      return transfer.downloadedAt ? '已下载 · 发送页面在线时可再次下载' : '可下载';
     case 'failed':
       return transfer.direction === 'out' ? '发送失败' : '接收失败';
     case 'canceled':
@@ -116,7 +121,8 @@ export default function MessageItem(props: {
                   {transferLabel(props.message.transfer)}
                 </div>
                 {props.message.transfer?.downloadUrl &&
-                  props.message.transfer.status === 'completed' &&
+                  props.message.transfer.status !== 'receiving' &&
+                  props.message.transfer.status !== 'canceled' &&
                   !props.message.transfer.expired && (
                     <a
                       className="mt-1 inline-block text-blue-40 underline"
@@ -126,27 +132,30 @@ export default function MessageItem(props: {
                       下载文件
                     </a>
                   )}
-                {isActive(props.message.transfer) && (
-                  <div className="mt-1.5">
-                    <div
-                      className={`h-1 overflow-hidden rounded-full ${props.message.direction === 'out' ? 'bg-black/25' : 'bg-neutral-50'}`}
-                    >
+                {isActive(props.message.transfer) &&
+                  !(
+                    props.message.transfer?.deferred && props.message.transfer.status === 'ready'
+                  ) && (
+                    <div className="mt-1.5">
                       <div
-                        className={`h-full rounded-full transition-[width] duration-150 ${props.message.direction === 'out' ? 'bg-white/85' : 'bg-blue-40'}`}
-                        style={`width:${percent(props.message.transfer)}%`}
-                      />
+                        className={`h-1 overflow-hidden rounded-full ${props.message.direction === 'out' ? 'bg-black/25' : 'bg-neutral-50'}`}
+                      >
+                        <div
+                          className={`h-full rounded-full transition-[width] duration-150 ${props.message.direction === 'out' ? 'bg-white/85' : 'bg-blue-40'}`}
+                          style={`width:${percent(props.message.transfer)}%`}
+                        />
+                      </div>
+                      <div
+                        className={`mt-1 flex items-center justify-between text-[10px] ${props.message.direction === 'out' ? 'text-white/65' : 'text-neutral-80'}`}
+                      >
+                        <span>
+                          {formatBytes(props.message.transfer?.bytes ?? 0)} /{' '}
+                          {formatBytes(props.message.transfer?.file.size ?? 0)}
+                        </span>
+                        <span>{percent(props.message.transfer)}%</span>
+                      </div>
                     </div>
-                    <div
-                      className={`mt-1 flex items-center justify-between text-[10px] ${props.message.direction === 'out' ? 'text-white/65' : 'text-neutral-80'}`}
-                    >
-                      <span>
-                        {formatBytes(props.message.transfer?.bytes ?? 0)} /{' '}
-                        {formatBytes(props.message.transfer?.file.size ?? 0)}
-                      </span>
-                      <span>{percent(props.message.transfer)}%</span>
-                    </div>
-                  </div>
-                )}
+                  )}
                 {props.message.transfer?.status === 'completed' &&
                   props.message.transfer.direction === 'in' &&
                   props.message.transfer.savedName &&

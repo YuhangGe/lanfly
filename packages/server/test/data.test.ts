@@ -45,35 +45,37 @@ describe('data.json configuration', () => {
     });
   });
 
-  it('migrates an approved legacy pairing once and retains its identity', async () => {
+  it('migrates old encrypted pairings to layout-only configuration without retaining keys', async () => {
     const dir = await directory();
-    const input = new InputStore(dir);
-    await input.load();
-    const publicKey = input.publicKey;
-    const { autoStart: _autoStart, ...legacy } = input.data!;
-    legacy.settings = { role: 'client', edge: 'bottom' };
-    legacy.paired = { key: publicKey, name: 'Saved peer', host: '192.168.1.20', port: 8089 };
+    const legacy = {
+      version: 1,
+      privateKey: 'old-key',
+      settings: { role: 'client', edge: 'bottom' },
+      autoStart: true,
+      paired: { key: 'peer-key', name: 'Old', host: '192.168.1.20', port: 8087 },
+    };
     const legacyFile = path.join(dir, 'input.json');
-    const content = JSON.stringify(legacy);
-    await writeFile(legacyFile, content);
-    await rm(input.file);
-    const other = new DataStore(dir);
-    await other.load();
-    await other.set('ui', { theme: 'light' });
+    await writeFile(legacyFile, JSON.stringify(legacy));
     const migrated = new InputStore(dir);
     await migrated.load();
-    expect(migrated.publicKey).toBe(publicKey);
-    expect(migrated.data?.autoStart).toBe(true);
-    expect(migrated.data?.paired).toEqual(legacy.paired);
-    expect(migrated.settings).toEqual(legacy.settings);
-    expect(await readFile(legacyFile, 'utf8')).toBe(content);
-    migrated.data!.autoStart = false;
-    await migrated.save();
+    expect(migrated.data).toMatchObject({
+      version: 2,
+      settings: legacy.settings,
+      autoStart: false,
+    });
+    expect(migrated.data?.target).toBeUndefined();
+    const id = migrated.data!.id;
+    expect(await readFile(migrated.file, 'utf8')).not.toContain('old-key');
     const reloaded = new InputStore(dir);
     await reloaded.load();
-    expect(reloaded.data?.autoStart).toBe(false);
-    const stored = JSON.parse(await readFile(input.file, 'utf8')) as { ui: unknown };
-    expect(stored.ui).toEqual({ theme: 'light' });
+    expect(reloaded.data!.id).toBe(id);
+    const data = new DataStore(dir);
+    await data.load();
+    await data.set('input', legacy);
+    const existing = new InputStore(dir);
+    await existing.load();
+    expect(existing.data?.autoStart).toBe(false);
+    expect(existing.data?.target).toBeUndefined();
   });
 
   it('preserves corrupt files instead of silently regenerating paired identities', async () => {

@@ -25,7 +25,7 @@ export class MulticastDiscovery {
 
   constructor(
     private readonly identity: Identity,
-    private readonly room: Room | undefined,
+    private readonly room: Room,
     private readonly onAnnouncement: AnnouncementHandler,
   ) {}
 
