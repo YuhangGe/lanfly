@@ -22,7 +22,7 @@ import {
   sendFile,
   sendMessage,
 } from '@server';
-import { nextTick, onMount, ref, vm, watch } from 'jinge';
+import { nextTick, onMount, ref, t, vm, watch } from 'jinge';
 
 import type { Toast, UiMessage } from './types';
 
@@ -31,6 +31,7 @@ import Avatar from './components/Avatar';
 import Button from './components/Button';
 import Dialog, { DialogActions } from './components/Dialog';
 import InputSharingDialog from './components/InputSharingDialog';
+import LanguageSwitcher from './components/LanguageSwitcher';
 import MessageItem from './components/MessageItem';
 import PeerList from './components/PeerList';
 import RemoteDesktopDialog from './components/RemoteDesktopDialog';
@@ -123,7 +124,10 @@ export default function App() {
   const failedToasts = new Set<string>();
   const drafts = new Map<string, string>();
   const deferredFiles = new DeferredFiles((file) =>
-    pushToast(`文件 ${truncate(file.name, 40)} 发送失败，请保持页面打开后重试`, 'error'),
+    pushToast(
+      t('文件 {name} 发送失败，请保持页面打开后重试', { name: truncate(file.name, 40) }),
+      'error',
+    ),
   );
   let autoSelectFirstPeer = true;
 
@@ -146,7 +150,8 @@ export default function App() {
 
   function updateTitle() {
     const total = Object.values(model.unread).reduce((sum, value) => sum + value, 0);
-    document.title = total > 0 ? `(${total}) lanfly` : 'lanfly';
+    const title = t('LanFly - 局域网聊天、文件互传、键鼠共享和远程桌面');
+    document.title = total > 0 ? `(${total}) ${title}` : title;
   }
 
   function pruneUnread() {
@@ -231,7 +236,7 @@ export default function App() {
     model.desktopPeerId = active.peerId;
     model.desktopSessionId = active.sessionId;
     model.desktopOpen = true;
-    pushToast(`${active.peerName} 正在查看并控制你的屏幕`, 'info');
+    pushToast(t('{name} 正在查看并控制你的屏幕', { name: active.peerName }), 'info');
   }
 
   async function refresh() {
@@ -239,7 +244,7 @@ export default function App() {
     if (error || !state) {
       if (model.loading) {
         model.loading = false;
-        pushToast(errorText(error) || '无法读取本地服务状态', 'error');
+        pushToast(errorText(error) || t('无法读取本地服务状态'), 'error');
       }
       model.connected = false;
       return;
@@ -294,9 +299,11 @@ export default function App() {
     };
     updateTitle();
     const peer = model.peers.find((item) => item.id === message.peerId);
-    const name = peer?.name ?? '局域网设备';
+    const name = peer?.name ?? t('局域网设备');
     if (message.kind === 'file') {
-      pushToast(`${name} 发来文件 ${truncate(message.file?.name ?? '', 40)}`);
+      pushToast(
+        t('{name} 发来文件 {file}', { name, file: truncate(message.file?.name ?? '', 40) }),
+      );
     } else {
       pushToast(`${name}：${truncate(message.text ?? '', 60)}`);
     }
@@ -324,7 +331,10 @@ export default function App() {
       !completedToasts.has(transfer.id)
     ) {
       completedToasts.add(transfer.id);
-      pushToast(`已接收 ${truncate(transfer.savedName ?? transfer.file.name, 48)}`, 'success');
+      pushToast(
+        t('已接收 {name}', { name: truncate(transfer.savedName ?? transfer.file.name, 48) }),
+        'success',
+      );
     }
     if (
       transfer.direction === 'in' &&
@@ -332,7 +342,7 @@ export default function App() {
       !failedToasts.has(transfer.id)
     ) {
       failedToasts.add(transfer.id);
-      pushToast(`接收 ${truncate(transfer.file.name, 40)} 失败`, 'error');
+      pushToast(t('接收 {name} 失败', { name: truncate(transfer.file.name, 40) }), 'error');
     }
   }
 
@@ -395,7 +405,7 @@ export default function App() {
         model.inputOpen = false;
         model.desktopMinimized = false;
         model.desktopOpen = true;
-        pushToast(`${payload.session.peerName} 已开始查看并控制你的屏幕`, 'info');
+        pushToast(t('{name} 已开始查看并控制你的屏幕', { name: payload.session.peerName }), 'info');
       }
     });
   }
@@ -429,7 +439,7 @@ export default function App() {
           peerId,
           sessionId: active.sessionId,
           currentName: active.peerName,
-          nextName: model.peers.find((peer) => peer.id === peerId)?.name ?? '目标设备',
+          nextName: model.peers.find((peer) => peer.id === peerId)?.name ?? t('目标设备'),
         };
         return;
       }
@@ -456,7 +466,7 @@ export default function App() {
     const text = model.draft.trim();
     if (!text) return;
     if (!model.activePeerId) {
-      pushToast('请先选择一台设备', 'error');
+      pushToast(t('请先选择一台设备'), 'error');
       return;
     }
     model.draft = '';
@@ -493,11 +503,15 @@ export default function App() {
       xhr.open('POST', url, true);
       xhr.setRequestHeader('content-type', 'application/octet-stream');
       xhr.onload = () => {
-        if (xhr.status !== 200) pushToast(`文件 ${truncate(file.name, 40)} 发送失败`, 'error');
+        if (xhr.status !== 200)
+          pushToast(t('文件 {name} 发送失败', { name: truncate(file.name, 40) }), 'error');
         resolve();
       };
       xhr.onerror = () => {
-        pushToast(`文件 ${truncate(file.name, 40)} 发送失败，请检查网络`, 'error');
+        pushToast(
+          t('文件 {name} 发送失败，请检查网络', { name: truncate(file.name, 40) }),
+          'error',
+        );
         resolve();
       };
       xhr.onabort = () => resolve();
@@ -518,7 +532,7 @@ export default function App() {
       toastError: false,
     });
     if (error || !result) {
-      pushToast(errorText(error) || '文件发送失败', 'error');
+      pushToast(errorText(error) || t('文件发送失败'), 'error');
       return;
     }
     if (result.deferred) deferredFiles.hold(result, file);
@@ -528,10 +542,10 @@ export default function App() {
   async function sendFiles(files: File[]) {
     if (!files.length) return;
     if (!model.activePeerId) {
-      pushToast('请先选择一台设备', 'error');
+      pushToast(t('请先选择一台设备'), 'error');
       return;
     }
-    if (!model.activePeer.online) pushToast('对方当前离线，正在尝试发送…', 'info');
+    if (!model.activePeer.online) pushToast(t('对方当前离线，正在尝试发送…'), 'info');
     const peerId = model.activePeerId;
     for (const file of files) {
       await sendOneFile(peerId, file);
@@ -593,7 +607,7 @@ export default function App() {
     }
     model.addBusy = false;
     model.addOpen = false;
-    pushToast('设备连接成功', 'success');
+    pushToast(t('设备连接成功'), 'success');
     await refresh();
     if (peer) {
       selectPeer(peer.id);
@@ -609,7 +623,7 @@ export default function App() {
       pushToast(errorText(error), 'error');
       return;
     }
-    pushToast('设备已重新连接', 'success');
+    pushToast(t('设备已重新连接'), 'success');
     await refresh();
   }
 
@@ -620,7 +634,7 @@ export default function App() {
       return;
     }
     applyPeers(model.peers.filter((peer) => peer.id !== peerId));
-    pushToast('已移除设备', 'info');
+    pushToast(t('已移除设备'), 'info');
   }
 
   async function cancel(id: string) {
@@ -637,9 +651,9 @@ export default function App() {
     const address = `http://${model.self.host}:${model.self.port}`;
     try {
       await navigator.clipboard.writeText(address);
-      pushToast('已复制局域网地址', 'success');
+      pushToast(t('已复制局域网地址'), 'success');
     } catch {
-      pushToast(`局域网地址：${address}`, 'info');
+      pushToast(t('局域网地址：{address}', { address }), 'info');
     }
   }
 
@@ -667,7 +681,7 @@ export default function App() {
       eventSource?.close();
       model.joinOpen = true;
       model.loading = false;
-      model.joinError = error instanceof Error ? error.message : '无法接入';
+      model.joinError = error instanceof Error ? error.message : t('无法接入');
       if ((error as { status?: number }).status !== 401)
         reconnectTimer = window.setTimeout(() => void startBrowser(), 3000);
     } finally {
@@ -686,7 +700,7 @@ export default function App() {
       model.renaming = false;
       await refresh();
     } catch (error) {
-      model.joinError = error instanceof Error ? error.message : '修改失败';
+      model.joinError = error instanceof Error ? error.message : t('修改失败');
     }
   }
 
@@ -710,7 +724,7 @@ export default function App() {
     <div className="flex h-dvh flex-col overflow-hidden bg-neutral-10 text-neutral-100">
       {model.joinOpen && (
         <Dialog
-          title={model.renaming ? '修改设备名称' : '接入 lanfly'}
+          title={model.renaming ? t('修改设备名称') : t('接入 lanfly')}
           canClose={model.renaming}
           onClose={() => {
             model.joinOpen = false;
@@ -724,10 +738,10 @@ export default function App() {
             }}
           >
             <label>
-              设备名称
+              {t('设备名称')}
               <input
                 className="mt-1 w-full rounded border border-neutral-60 bg-neutral-20 p-2"
-                aria-label="设备名称"
+                aria-label={t('设备名称')}
                 value={model.browserName}
                 maxLength={64}
                 required
@@ -738,7 +752,7 @@ export default function App() {
             </label>
             {model.joinError && <p className="text-red-40">{model.joinError}</p>}
             <Button type="submit" variant="primary" disabled={model.joinBusy}>
-              {model.renaming ? '保存' : '加入'}
+              {model.renaming ? t('保存') : t('加入')}
             </Button>
           </form>
         </Dialog>
@@ -768,13 +782,15 @@ export default function App() {
             </button>
             <span
               className="flex shrink-0 items-center gap-1 rounded-full border border-neutral-50 bg-neutral-30 px-1.5 py-0.5 text-[9.5px] text-neutral-80 max-[900px]:hidden"
-              title="相同 Room ID 的主机才能连接；数据明文传输"
+              title={t('相同 Room ID 的主机才能连接；数据明文传输')}
             >
               Room {model.self.roomId}
             </span>
             <button
               className="flex min-w-0 items-center gap-1 text-[10px] text-neutral-70 hover:text-neutral-90 max-[900px]:hidden"
-              title={`复制局域网地址：${model.self.host}:${model.self.port}`}
+              title={t('复制局域网地址：{address}', {
+                address: `${model.self.host}:${model.self.port}`,
+              })}
               on:click={() => void copyAddress()}
             >
               <span className="truncate">
@@ -785,19 +801,22 @@ export default function App() {
           </div>
         )}
         <div className="ml-auto flex items-center gap-1.5">
+          <LanguageSwitcher />
           <span
             className={`flex items-center gap-1.5 rounded-full border px-2 py-1 text-[10px] ${
               model.connected
                 ? 'border-neutral-50 text-neutral-80'
                 : 'border-amber-30 bg-amber-10 text-amber-40'
             }`}
-            title={model.connected ? '本地服务连接正常' : '与本地服务断开，EventSource 正在重连'}
+            title={
+              model.connected ? t('本地服务连接正常') : t('与本地服务断开，EventSource 正在重连')
+            }
           >
             <span
               className={`size-1.5 rounded-full ${model.connected ? 'bg-green-40' : 'typing-dot bg-amber-40'}`}
             />
             <span className="max-[900px]:hidden">
-              {model.connected ? '本地服务已连接' : '正在重连…'}
+              {model.connected ? t('本地服务已连接') : t('正在重连…')}
             </span>
           </span>
           {!browserMode && (
@@ -805,23 +824,24 @@ export default function App() {
               align="end"
               content={
                 model.self.downloadsDir
-                  ? `当前下载目录
-${model.self.downloadsDir}`
-                  : '当前下载目录尚未加载'
+                  ? t('当前下载目录\n{path}', { path: model.self.downloadsDir })
+                  : t('当前下载目录尚未加载')
               }
             >
               <Button
                 size="compact"
                 variant="ghost"
                 className="text-neutral-90 hover:text-neutral-110"
-                aria-label={`打开下载目录：${model.self.downloadsDir || '尚未加载'}`}
+                aria-label={t('打开下载目录：{path}', {
+                  path: model.self.downloadsDir || t('尚未加载'),
+                })}
                 on:click={() => void openDownloadsFolder()}
               >
                 <span
                   className="icon-[codicon--folder-opened] align-middle text-[13px] sm:mr-1"
                   aria-hidden="true"
                 />
-                <span className="max-[760px]:hidden">下载目录</span>
+                <span className="max-[760px]:hidden">{t('下载目录')}</span>
               </Button>
             </Tooltip>
           )}
@@ -830,14 +850,14 @@ ${model.self.downloadsDir}`
               size="compact"
               variant="primary"
               className="font-medium"
-              aria-label="添加设备"
+              aria-label={t('添加设备')}
               on:click={openAddPeer}
             >
               <span
                 className="icon-[codicon--add] align-middle text-[13px] sm:mr-1"
                 aria-hidden="true"
               />
-              <span className="max-[760px]:hidden">添加设备</span>
+              <span className="max-[760px]:hidden">{t('添加设备')}</span>
             </Button>
           )}
         </div>
@@ -845,7 +865,7 @@ ${model.self.downloadsDir}`
 
       {!model.connected && !model.loading && (
         <div className="shrink-0 border-b border-amber-30 bg-amber-10 px-4 py-1 text-center text-[10.5px] text-amber-40">
-          与本地 lanfly 服务的连接已断开，正在自动重连…
+          {t('与本地 lanfly 服务的连接已断开，正在自动重连…')}
         </div>
       )}
 
@@ -857,9 +877,11 @@ ${model.self.downloadsDir}`
         >
           <div className="flex items-center justify-between px-4 pt-3 pb-1.5">
             <span className="text-[10px] font-semibold tracking-[0.12em] text-neutral-70 uppercase">
-              局域网设备
+              {t('局域网设备')}
             </span>
-            <span className="text-[10px] text-neutral-70">{model.onlineCount} 在线</span>
+            <span className="text-[10px] text-neutral-70">
+              {t('{count} 在线', { count: model.onlineCount })}
+            </span>
           </div>
 
           <PeerList
@@ -875,12 +897,12 @@ ${model.self.downloadsDir}`
           <div className="shrink-0 border-t border-neutral-40 px-4 py-3 text-[10px] leading-relaxed text-neutral-70">
             <div className="flex items-center gap-1.5">
               <span className="icon-[codicon--radio-tower] text-[11px]" aria-hidden="true" />
-              <span>{browserMode ? '已作为独立设备接入' : 'UDP 组播自动发现'}</span>
+              <span>{browserMode ? t('已作为独立设备接入') : t('UDP 组播自动发现')}</span>
             </div>
             <div className="mt-1 text-neutral-70/80">
               {browserMode
-                ? '下载邀请有效 30 分钟；发送页面需保持打开。'
-                : '组播不可用时，点击“添加设备”输入对方 IP。'}
+                ? t('下载邀请有效 30 分钟；发送页面需保持打开。')
+                : t('组播不可用时，点击“添加设备”输入对方 IP。')}
             </div>
           </div>
         </aside>
@@ -907,7 +929,7 @@ ${model.self.downloadsDir}`
                 className="icon-[codicon--loading] animate-spin text-[26px]"
                 aria-hidden="true"
               />
-              <span className="text-[12px]">正在连接本地服务…</span>
+              <span className="text-[12px]">{t('正在连接本地服务…')}</span>
             </div>
           )}
 
@@ -920,12 +942,16 @@ ${model.self.downloadsDir}`
                 />
               </div>
               <h1 className="mt-5 text-[17px] font-semibold text-neutral-110">
-                {model.peers.length ? '选择一台设备开始聊天' : '正在发现局域网设备'}
+                {model.peers.length ? t('选择一台设备开始聊天') : t('正在发现局域网设备')}
               </h1>
               <p className="mt-2 max-w-[420px] text-[12px] leading-relaxed text-neutral-80">
                 {model.peers.length
-                  ? '左侧列表中的设备与你运行着同一个 lanfly。选择后可以发送消息、拖拽文件，或直接粘贴截图。'
-                  : '让另一台电脑也运行 npx lanfly。同一局域网内会自动出现，不需要登录或配置服务器。'}
+                  ? t(
+                      '左侧列表中的设备与你运行着同一个 lanfly。选择后可以发送消息、拖拽文件，或直接粘贴截图。',
+                    )
+                  : t(
+                      '让另一台电脑也运行 npx lanfly。同一局域网内会自动出现，不需要登录或配置服务器。',
+                    )}
               </p>
               {!browserMode && !model.peers.length && (
                 <div className="mt-6 flex items-center gap-2">
@@ -934,7 +960,7 @@ ${model.self.downloadsDir}`
                       className="mr-1.5 icon-[codicon--plug] align-middle text-[13px]"
                       aria-hidden="true"
                     />
-                    手动添加 IP
+                    {t('手动添加 IP')}
                   </Button>
                   <Button
                     variant="ghost"
@@ -946,14 +972,14 @@ ${model.self.downloadsDir}`
                       className="mr-1.5 icon-[codicon--refresh] align-middle text-[13px]"
                       aria-hidden="true"
                     />
-                    刷新
+                    {t('刷新')}
                   </Button>
                 </div>
               )}
               {model.self.id && (
                 <div className="mt-8 rounded-popup border border-neutral-40 bg-neutral-20/70 px-4 py-2.5 text-[10.5px] text-neutral-70">
-                  本机地址：
-                  <span className="text-neutral-90">
+                  {t('本机地址：')}
+                  <span className="ml-0.5 text-neutral-90">
                     {model.self.host}:{model.self.port}
                   </span>
                   <span className="mx-2 text-neutral-60">·</span>
@@ -969,8 +995,8 @@ ${model.self.downloadsDir}`
                 <Button
                   size="icon"
                   className="text-neutral-90 min-[761px]:hidden"
-                  title="返回设备列表"
-                  aria-label="返回设备列表"
+                  title={t('返回设备列表')}
+                  aria-label={t('返回设备列表')}
                   on:click={backToPeers}
                 >
                   <span className="icon-[codicon--arrow-left] text-[16px]" aria-hidden="true" />
@@ -987,7 +1013,7 @@ ${model.self.downloadsDir}`
                     </span>
                     {model.activePeer.manual && (
                       <span className="rounded-control border border-neutral-50 px-1 py-0.5 text-[9px] text-neutral-80">
-                        手动
+                        {t('手动')}
                       </span>
                     )}
                   </div>
@@ -996,7 +1022,7 @@ ${model.self.downloadsDir}`
                       className={`size-1.5 rounded-full ${model.activePeer.online ? 'bg-green-40' : 'bg-neutral-70'}`}
                     />
                     <span>
-                      {model.activePeer.online ? '在线' : '离线'}
+                      {model.activePeer.online ? t('在线') : t('离线')}
                       <span className="mx-1 text-neutral-60">·</span>
                       {model.activePeer.kind === 'browser'
                         ? model.activePeer.host
@@ -1011,15 +1037,15 @@ ${model.self.downloadsDir}`
                       size="compact"
                       variant="ghost"
                       className="shrink-0 text-neutral-80 hover:text-neutral-110"
-                      title={`远程桌面：${model.activePeer.name}`}
-                      aria-label="远程桌面"
+                      title={t('远程桌面：{name}', { name: model.activePeer.name })}
+                      aria-label={t('远程桌面')}
                       on:click={() => void openDesktop(model.activePeer.id)}
                     >
                       <span
                         className="icon-[codicon--share-window] align-middle text-[13px] sm:mr-1"
                         aria-hidden="true"
                       />
-                      <span className="max-[760px]:hidden">远程桌面</span>
+                      <span className="max-[760px]:hidden">{t('远程桌面')}</span>
                     </Button>
                   )}
                 {!browserMode &&
@@ -1030,8 +1056,8 @@ ${model.self.downloadsDir}`
                       size="compact"
                       variant="ghost"
                       className="shrink-0 text-neutral-80 hover:text-neutral-110"
-                      title={`键鼠共享：${model.activePeer.name}`}
-                      aria-label="键鼠共享"
+                      title={t('键鼠共享：{name}', { name: model.activePeer.name })}
+                      aria-label={t('键鼠共享')}
                       on:click={() => {
                         model.inputOpen = true;
                       }}
@@ -1040,7 +1066,7 @@ ${model.self.downloadsDir}`
                         className="icon-[codicon--remote] align-middle text-[13px] sm:mr-1"
                         aria-hidden="true"
                       />
-                      <span className="max-[760px]:hidden">键鼠共享</span>
+                      <span className="max-[760px]:hidden">{t('键鼠共享')}</span>
                     </Button>
                   )}
               </div>
@@ -1054,10 +1080,12 @@ ${model.self.downloadsDir}`
                         aria-hidden="true"
                       />
                       <p className="m-0 text-[11.5px]">
-                        还没有消息。向 {model.activePeer.name} 发送第一条消息吧。
+                        {t('还没有消息。向 {name} 发送第一条消息吧。', {
+                          name: model.activePeer.name,
+                        })}
                       </p>
                       <p className="m-0 text-[10.5px] text-neutral-70">
-                        对方离线时消息会显示发送失败，可在消息下方重试。
+                        {t('对方离线时消息会显示发送失败，可在消息下方重试。')}
                       </p>
                     </div>
                   )}
@@ -1068,7 +1096,10 @@ ${model.self.downloadsDir}`
                       onRetry={(id) => void retry(id)}
                       onCancel={(id) => void cancel(id)}
                       onCopied={(copied) =>
-                        pushToast(copied ? '已复制消息' : '复制失败', copied ? 'success' : 'error')
+                        pushToast(
+                          copied ? t('已复制消息') : t('复制失败'),
+                          copied ? 'success' : 'error',
+                        )
                       }
                     />
                   ))}
@@ -1090,8 +1121,8 @@ ${model.self.downloadsDir}`
                     <Button
                       size="icon"
                       className="mb-0.5 shrink-0 text-neutral-80 hover:bg-white/5 hover:text-neutral-110"
-                      title="发送文件"
-                      aria-label="发送文件"
+                      title={t('发送文件')}
+                      aria-label={t('发送文件')}
                       on:click={() => fileInput.value?.click()}
                     >
                       <span className="icon-[codicon--attach] text-[17px]" aria-hidden="true" />
@@ -1100,8 +1131,8 @@ ${model.self.downloadsDir}`
                       ref={composer}
                       rows={1}
                       value={model.draft}
-                      placeholder={`发送给 ${model.activePeer.name}…`}
-                      aria-label="消息内容"
+                      placeholder={t('发送给 {name}…', { name: model.activePeer.name })}
+                      aria-label={t('消息内容')}
                       on:input={(event) => {
                         model.draft = event.target.value;
                         autoGrow(event.target);
@@ -1120,20 +1151,20 @@ ${model.self.downloadsDir}`
                       variant="primary"
                       className="mb-0.5 shrink-0 rounded-[7px]"
                       disabled={!model.draft.trim()}
-                      title="发送（Enter）"
-                      aria-label="发送消息"
+                      title={t('发送（Enter）')}
+                      aria-label={t('发送消息')}
                       on:click={() => void sendDraft()}
                     >
                       <span className="icon-[codicon--send] text-[15px]" aria-hidden="true" />
                     </Button>
                   </div>
                   <div className="mt-1.5 flex items-center justify-between px-1 text-[10px] text-neutral-70">
-                    <span>Enter 发送 · Shift+Enter 换行 · 支持拖拽或粘贴文件</span>
+                    <span>{t('Enter 发送 · Shift+Enter 换行 · 支持拖拽或粘贴文件')}</span>
                     <span className="flex items-center gap-1.5">
                       <span
                         className={`size-1.5 rounded-full ${model.activePeer.online ? 'bg-green-40' : 'bg-neutral-60'}`}
                       />
-                      {model.activePeer.online ? '对方在线' : '对方离线'}
+                      {model.activePeer.online ? t('对方在线') : t('对方离线')}
                     </span>
                   </div>
                 </div>
@@ -1145,8 +1176,8 @@ ${model.self.downloadsDir}`
             <div className="pointer-events-none absolute inset-3 z-30 grid place-items-center rounded-[12px] border-2 border-dashed border-blue-40 bg-neutral-20/85 backdrop-blur-[2px]">
               <div className="flex flex-col items-center gap-2 text-blue-40">
                 <span className="icon-[codicon--cloud-upload] text-[34px]" aria-hidden="true" />
-                <span className="text-[13px] font-medium">松开鼠标发送文件</span>
-                <span className="text-[10.5px] text-neutral-80">文件会直接传到对方设备</span>
+                <span className="text-[13px] font-medium">{t('松开鼠标发送文件')}</span>
+                <span className="text-[10.5px] text-neutral-80">{t('文件会直接传到对方设备')}</span>
               </div>
             </div>
           )}
@@ -1176,20 +1207,21 @@ ${model.self.downloadsDir}`
 
       {model.desktopSwitch && (
         <Dialog
-          title="切换远程桌面"
+          title={t('切换远程桌面')}
           size="compact"
           onClose={() => {
             model.desktopSwitch = null;
           }}
         >
           <p className="m-0 text-[12px] leading-relaxed text-neutral-90">
-            当前正在与{' '}
+            {t('当前正在与')}{' '}
             <strong className="text-neutral-110">{model.desktopSwitch.currentName}</strong>{' '}
-            进行远程桌面。
+            {t('进行远程桌面。')}
           </p>
           <p className="mt-2 mb-0 text-[12px] leading-relaxed text-neutral-80">
-            结束当前会话并连接到{' '}
-            <strong className="text-neutral-110">{model.desktopSwitch.nextName}</strong>？
+            {t('结束当前会话并连接到')}{' '}
+            <strong className="text-neutral-110">{model.desktopSwitch.nextName}</strong>
+            {t('？')}
           </p>
           <DialogActions>
             <Button
@@ -1198,10 +1230,10 @@ ${model.self.downloadsDir}`
                 model.desktopSwitch = null;
               }}
             >
-              取消
+              {t('取消')}
             </Button>
             <Button variant="danger" on:click={() => void confirmDesktopSwitch()}>
-              结束并切换
+              {t('结束并切换')}
             </Button>
           </DialogActions>
         </Dialog>

@@ -7,6 +7,8 @@
   "scripts": {
     "build": "tsc --noEmit && vite build",
     "dev": "vite",
+    "intl:compile": "intl-compile --csv intl/translate.csv --output-dir src/intl && oxfmt src/intl",
+    "intl:extract": "intl-extract --lang zh-CN,zh-TW,en --csv intl/translate.csv src",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit"
   },

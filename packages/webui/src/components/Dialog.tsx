@@ -1,4 +1,4 @@
-import { onMount, ref, type JNode } from 'jinge';
+import { onMount, ref, t, type JNode } from 'jinge';
 
 import Button from './Button';
 import { onChanges } from './reactivity';
@@ -79,7 +79,7 @@ export default function Dialog(props: {
           <Button
             size="bare"
             className="text-[18px] text-neutral-90 hover:text-neutral-110"
-            aria-label={`关闭${props.title}`}
+            aria-label={t('关闭{title}', { title: props.title })}
             on:click={props.onClose}
           >
             <span className="icon-[codicon--close] align-middle" aria-hidden="true" />

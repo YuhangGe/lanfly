@@ -17,7 +17,7 @@ import {
   desktopStatus,
   desktopStop,
 } from '@server';
-import { nextTick, onMount, ref, vm } from 'jinge';
+import { nextTick, onMount, ref, t, vm } from 'jinge';
 
 import { ActionError } from '../service/action';
 import { browserLocalAddress } from '../service/browser';
@@ -39,17 +39,17 @@ function errorText(error: ActionResultError | null | undefined): string {
 function phaseText(phase: UiPhase): string {
   switch (phase) {
     case 'waiting':
-      return '等待对方授权';
+      return t('等待对方授权');
     case 'connecting':
-      return '正在建立视频连接';
+      return t('正在建立视频连接');
     case 'connected':
-      return '已连接';
+      return t('已连接');
     case 'ended':
-      return '会话已结束';
+      return t('会话已结束');
     case 'error':
-      return '连接失败';
+      return t('连接失败');
     default:
-      return '选择设备';
+      return t('选择设备');
   }
 }
 
@@ -164,7 +164,7 @@ export default function RemoteDesktopDialog(props: {
         if (!session.error) void connect(session);
       } else if (session.phase === 'connecting' || session.phase === 'connected') {
         model.phase = 'error';
-        model.error = '这个会话已经由另一个页面建立，请先结束会话后重试。';
+        model.error = t('这个会话已经由另一个页面建立，请先结束会话后重试。');
       }
     }
   }
@@ -225,7 +225,7 @@ export default function RemoteDesktopDialog(props: {
     if (model.busy) return;
     setInitialPeer();
     if (!model.peerId) {
-      model.error = '请选择一台在线设备';
+      model.error = t('请选择一台在线设备');
       return;
     }
     model.busy = true;
@@ -237,7 +237,7 @@ export default function RemoteDesktopDialog(props: {
       });
       if (!mounted) return;
       if (error || !session) {
-        model.error = errorText(error) || '无法发起远程桌面请求';
+        model.error = errorText(error) || t('无法发起远程桌面请求');
         model.phase = 'error';
         return;
       }
@@ -332,7 +332,7 @@ export default function RemoteDesktopDialog(props: {
             break;
           case 'failed':
             model.phase = 'error';
-            model.error = 'WebRTC 连接失败，请确认两台设备在同一局域网内。';
+            model.error = t('WebRTC 连接失败，请确认两台设备在同一局域网内。');
             break;
           default:
             break;
@@ -343,14 +343,14 @@ export default function RemoteDesktopDialog(props: {
       const offer = await peer.createOffer();
       await peer.setLocalDescription(offer);
       const sdp = peer.localDescription?.sdp ?? offer.sdp;
-      if (!sdp) throw new Error('无法生成 SDP offer');
+      if (!sdp) throw new Error(t('无法生成 SDP offer'));
       const [error, result] = await desktopOffer({
         input: { sessionId: session.sessionId, sdp },
         toastError: false,
       });
       if (!mounted) return;
       if (error || !result) {
-        throw new Error(errorText(error) || 'SDP 交换失败');
+        throw new Error(errorText(error) || t('SDP 交换失败'));
       }
       await peer.setRemoteDescription({ type: 'answer', sdp: result.sdp });
       remoteDescriptionSet = true;
@@ -366,7 +366,7 @@ export default function RemoteDesktopDialog(props: {
     } catch (error) {
       if (!mounted) return;
       model.phase = 'error';
-      model.error = error instanceof Error ? error.message : '无法建立远程桌面连接';
+      model.error = error instanceof Error ? error.message : t('无法建立远程桌面连接');
       cleanupPeer();
     } finally {
       connecting = false;
@@ -415,7 +415,9 @@ export default function RemoteDesktopDialog(props: {
       const current = model.session;
       if (!current || current.sessionId !== event.session.sessionId) return;
       model.phase = 'ended';
-      model.error = event.reason ? `对方拒绝：${event.reason}` : '对方拒绝了远程桌面请求';
+      model.error = event.reason
+        ? t('对方拒绝：{reason}', { reason: event.reason })
+        : t('对方拒绝了远程桌面请求');
       cleanupPeer();
       return;
     }
@@ -592,7 +594,7 @@ export default function RemoteDesktopDialog(props: {
 
   return (
     <Dialog
-      title="远程桌面"
+      title={t('远程桌面')}
       size="screen"
       open={!props.minimized}
       onClose={() => void close()}
@@ -602,12 +604,13 @@ export default function RemoteDesktopDialog(props: {
         {!model.session && (
           <div className="rounded-control border border-neutral-50 bg-neutral-20 p-3">
             <p className="m-0 leading-relaxed text-neutral-80">
-              选择一台局域网内的 Mac，发起后对方自动接受并开启鼠标键盘控制。视频通过 WebRTC
-              直接传输，不经过 Node.js 中转。被控端需预先授予屏幕录制和辅助功能权限。
+              {t(
+                '选择一台局域网内的 Mac，发起后对方自动接受并开启鼠标键盘控制。视频通过 WebRTC 直接传输，不经过 Node.js 中转。被控端需预先授予屏幕录制和辅助功能权限。',
+              )}
             </p>
             <div className="mt-3 grid grid-cols-2 gap-3 max-[620px]:grid-cols-1">
               <label className="flex flex-col gap-1.5">
-                远程设备
+                {t('远程设备')}
                 <select
                   value={model.peerId}
                   className="rounded-control border border-neutral-60 bg-neutral-40 px-2.5 py-2 text-[12px] text-neutral-110 outline-none focus:border-blue-40"
@@ -616,17 +619,17 @@ export default function RemoteDesktopDialog(props: {
                     selectPreferredBitrate(model.peerId);
                   }}
                 >
-                  <option value="">请选择一台设备</option>
+                  <option value="">{t('请选择一台设备')}</option>
                   {nativePeers().map((peer) => (
                     <option key={peer.id} value={peer.id}>
                       {peer.name}
-                      {peer.online ? '' : '（离线）'}
+                      {peer.online ? '' : t('（离线）')}
                     </option>
                   ))}
                 </select>
               </label>
               <label className="flex flex-col gap-1.5">
-                画质
+                {t('画质')}
                 <select
                   value={String(model.bitrate)}
                   className="rounded-control border border-neutral-60 bg-neutral-40 px-2.5 py-2 text-[12px] text-neutral-110 outline-none focus:border-blue-40"
@@ -634,27 +637,27 @@ export default function RemoteDesktopDialog(props: {
                     model.bitrate = Number((event.target as HTMLSelectElement).value);
                   }}
                 >
-                  <option value="2000000">流畅（2 Mbps）</option>
-                  <option value="4000000">均衡（4 Mbps）</option>
-                  <option value="8000000">清晰（8 Mbps）</option>
-                  <option value="16000000">超高清（16 Mbps）</option>
-                  <option value="32000000">超高清（32 Mbps）</option>
+                  <option value="2000000">{t('流畅（2 Mbps）')}</option>
+                  <option value="4000000">{t('均衡（4 Mbps）')}</option>
+                  <option value="8000000">{t('清晰（8 Mbps）')}</option>
+                  <option value="16000000">{t('超高清（16 Mbps）')}</option>
+                  <option value="32000000">{t('超高清（32 Mbps）')}</option>
                 </select>
               </label>
             </div>
             <p className="mt-3 mb-0 text-[11px] leading-relaxed text-neutral-70">
-              建立后会自动开启鼠标和键盘控制，不需要对方再确认。
+              {t('建立后会自动开启鼠标和键盘控制，不需要对方再确认。')}
             </p>
             <div className="mt-3 flex items-center justify-between gap-3">
               <span className="text-[10.5px] leading-relaxed text-neutral-70">
-                手机浏览器也可作为查看端；控制端需要 macOS 的辅助功能权限。
+                {t('手机浏览器也可作为查看端；控制端需要 macOS 的辅助功能权限。')}
               </span>
               <Button
                 variant="primary"
                 disabled={model.busy || !model.peerId}
                 on:click={() => void startRequest()}
               >
-                {model.busy ? '正在连接…' : '开始远程桌面'}
+                {model.busy ? t('正在连接…') : t('开始远程桌面')}
               </Button>
             </div>
           </div>
@@ -678,7 +681,7 @@ export default function RemoteDesktopDialog(props: {
               {model.controlGranted &&
                 (model.phase === 'connecting' || model.phase === 'connected') && (
                   <span className="rounded-full border border-green-40/40 bg-green-40/10 px-1.5 py-0.5 text-[9.5px] text-green-40">
-                    可控制
+                    {t('可控制')}
                   </span>
                 )}
             </div>
@@ -687,7 +690,7 @@ export default function RemoteDesktopDialog(props: {
                 <Button
                   size="compact"
                   variant="secondary"
-                  title={model.fullscreen ? '退出全屏' : '全屏显示'}
+                  title={model.fullscreen ? t('退出全屏') : t('全屏显示')}
                   on:click={() => void toggleFullscreen()}
                 >
                   <span
@@ -704,8 +707,8 @@ export default function RemoteDesktopDialog(props: {
                   <Button
                     size="compact"
                     variant="secondary"
-                    title="最小化远程桌面"
-                    aria-label="最小化远程桌面"
+                    title={t('最小化远程桌面')}
+                    aria-label={t('最小化远程桌面')}
                     on:click={minimize}
                   >
                     <span
@@ -724,7 +727,7 @@ export default function RemoteDesktopDialog(props: {
                   disabled={model.busy}
                   on:click={() => void stopSession('USER_STOPPED')}
                 >
-                  停止远程桌面
+                  {t('停止远程桌面')}
                 </Button>
               )}
             </div>
@@ -735,10 +738,12 @@ export default function RemoteDesktopDialog(props: {
           (model.phase === 'connecting' || model.phase === 'connected') && (
             <div className="rounded-control border border-neutral-50 bg-neutral-20 p-4 text-[12px] leading-relaxed text-neutral-80">
               <p className="m-0">
-                正在向 {model.session.peerName} 共享屏幕，鼠标键盘控制已同时开启。
+                {t('正在向 {name} 共享屏幕，鼠标键盘控制已同时开启。', {
+                  name: model.session.peerName,
+                })}
               </p>
               <p className="mt-1 mb-0 text-[11px] text-neutral-70">
-                随时可以点击“停止远程桌面”结束共享。停止后对方会立即失去画面和控制。
+                {t('随时可以点击“停止远程桌面”结束共享。停止后对方会立即失去画面和控制。')}
               </p>
             </div>
           )}
@@ -747,7 +752,7 @@ export default function RemoteDesktopDialog(props: {
           <div
             ref={stage}
             tabIndex={0}
-            aria-label="远程桌面画面"
+            aria-label={t('远程桌面画面')}
             className={`relative overflow-hidden rounded-control border border-neutral-60 bg-black outline-none ${
               model.phase === 'connected' || model.phase === 'connecting' ? '' : 'hidden'
             } h-[min(62vh,620px)]`}
@@ -777,7 +782,7 @@ export default function RemoteDesktopDialog(props: {
             )}
             {model.phase === 'connected' && model.controlGranted && !model.controlReady && (
               <div className="pointer-events-none absolute bottom-2 left-2 rounded-control bg-black/60 px-2 py-1 text-[10px] text-amber-40">
-                控制通道正在建立，视频已可查看
+                {t('控制通道正在建立，视频已可查看')}
               </div>
             )}
           </div>
@@ -785,18 +790,20 @@ export default function RemoteDesktopDialog(props: {
 
         {model.phase === 'connected' && model.session?.role === 'controller' && (
           <p className="m-0 text-[10.5px] leading-relaxed text-neutral-70">
-            点击画面后可使用鼠标和键盘；离开窗口会释放所有按键。
-            {model.width > 0 && model.height > 0 ? ` 分辨率 ${model.width}×${model.height}。` : ''}
+            {t('点击画面后可使用鼠标和键盘；离开窗口会释放所有按键。')}
+            {model.width > 0 && model.height > 0
+              ? t(' 分辨率 {width}×{height}。', { width: model.width, height: model.height })
+              : ''}
           </p>
         )}
 
         {model.phase === 'ended' && (
           <div className="rounded-control border border-neutral-50 bg-neutral-20 p-4 text-[12px] leading-relaxed">
-            <strong>远程桌面已结束</strong>
-            <p className="mt-1 mb-0 text-neutral-80">{model.error || '会话已停止。'}</p>
+            <strong>{t('远程桌面已结束')}</strong>
+            <p className="mt-1 mb-0 text-neutral-80">{model.error || t('会话已停止。')}</p>
             <div className="mt-3 flex justify-end">
               <Button variant="secondary" on:click={() => void close()}>
-                关闭
+                {t('关闭')}
               </Button>
             </div>
           </div>
@@ -814,16 +821,24 @@ export default function RemoteDesktopDialog(props: {
         {model.phase === 'error' && model.session && (
           <div className="flex justify-end">
             <Button variant="secondary" on:click={() => void stopSession('USER_STOPPED')}>
-              结束会话
+              {t('结束会话')}
             </Button>
           </div>
         )}
 
         {!props.browserMode && model.status && model.status.available && (
           <div className="flex flex-wrap items-center gap-2 rounded-control border border-neutral-50 px-2.5 py-2 text-[10px] text-neutral-70">
-            <span>屏幕录制：{model.status.screenRecording ? '已授权' : '未授权'}</span>
-            <span>辅助功能：{model.status.accessibility ? '已授权' : '未授权'}</span>
-            <span>显示器：{model.status.screens} 个</span>
+            <span>
+              {t('屏幕录制：{status}', {
+                status: model.status.screenRecording ? t('已授权') : t('未授权'),
+              })}
+            </span>
+            <span>
+              {t('辅助功能：{status}', {
+                status: model.status.accessibility ? t('已授权') : t('未授权'),
+              })}
+            </span>
+            <span>{t('显示器：{screens} 个', { screens: model.status.screens })}</span>
             {(!model.status.screenRecording || !model.status.accessibility) && (
               <Button
                 size="compact"
@@ -831,7 +846,7 @@ export default function RemoteDesktopDialog(props: {
                 disabled={model.busy}
                 on:click={() => void requestPermissions()}
               >
-                请求系统授权
+                {t('请求系统授权')}
               </Button>
             )}
           </div>

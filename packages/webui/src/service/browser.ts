@@ -1,3 +1,4 @@
+import { t } from 'jinge';
 import { stringify } from 'superjson';
 
 export const browserMode = !['127.0.0.1', 'localhost', '[::1]', '::1'].includes(location.hostname);
@@ -39,8 +40,8 @@ export function browserName(): string {
           ? 'macOS'
           : /Linux/i.test(ua)
             ? 'Linux'
-            : '浏览器';
-  return stored('lanfly.browser.name') || `${platform} 浏览器`;
+            : t('浏览器');
+  return stored('lanfly.browser.name') || `${platform} ${t('浏览器')}`;
 }
 
 export async function joinBrowser(name: string): Promise<void> {
@@ -51,7 +52,9 @@ export async function joinBrowser(name: string): Promise<void> {
     credentials: 'same-origin',
   });
   if (!response.ok)
-    throw Object.assign(new Error('无法接入，请确认 lanfly 仍在运行'), { status: response.status });
+    throw Object.assign(new Error(t('无法接入，请确认 lanfly 仍在运行')), {
+      status: response.status,
+    });
   remember('lanfly.browser.name', name);
 }
 
@@ -61,7 +64,7 @@ export async function renameBrowser(name: string): Promise<void> {
     headers: { 'content-type': 'application/json' },
     body: stringify({ name }),
   });
-  if (!response.ok) throw new Error('修改名称失败');
+  if (!response.ok) throw new Error(t('修改名称失败'));
   remember('lanfly.browser.name', name);
 }
 

@@ -18,5 +18,5 @@
       }
     ]
   },
-  "ignorePatterns": ["**/node_modules/**", "**/dist/**", "**/*.d.ts"]
+  "ignorePatterns": ["**/node_modules/**", "**/dist/**", "**/*.d.ts", "packages/webui/src/intl/**"]
 }

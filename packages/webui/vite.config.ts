@@ -10,7 +10,11 @@ const commonEntry = fileURLToPath(new URL('../common/src/index.ts', import.meta.
 const actionStub = fileURLToPath(new URL('./src/service/action/server.ts', import.meta.url));
 
 export default defineConfig({
-  plugins: [ServerActionPlugin(), jingeVitePlugin(), tailwindcss()],
+  plugins: [
+    ServerActionPlugin(),
+    jingeVitePlugin({ intl: { dropDefaultText: false } }),
+    tailwindcss(),
+  ],
   resolve: {
     alias: {
       '@': srcDir,

@@ -87,6 +87,18 @@ script/                构建、发布、原生打包脚本
 - 启动窗口结束后向本地页面和直接接入的浏览器设备广播 `reload`，页面收到后刷新。
 - 关闭服务时会向现有 SSE 客户端补发 `retry: 300`，方便下次启动快速重连。
 
+## 多语言
+
+WebUI 的文案使用 jinge 的 `t()`。首次打开按 `navigator.languages` 选择 `zh-CN` / `zh-TW` / `en`，手动切换后写入 `localStorage` 的 `lanfly.locale`，不改 URL。
+
+```sh
+pnpm -C packages/webui intl:extract   # 扫描 src，生成/更新 intl/translate.csv
+# 翻译 CSV 的 zh-TW 和 en 列
+pnpm -C packages/webui intl:compile   # 生成 src/intl/{zh-CN,zh-TW,en}.tsx
+```
+
+`main.tsx` 在 `bootstrap` 前调用 `intlInit`，并通过动态 import 加载语言字典。目录中的生成文件不要手工修改，改源文案后重新 extract/compile。
+
 ## 配置与状态
 
 `data.json` 位于运行 `cli.js` 所在目录，默认是 `dist/data.json`；可用 `LANFLY_CONFIG_DIR` 指定目录。它不会提交到 Git，也不会包含在 npm 发布包里。

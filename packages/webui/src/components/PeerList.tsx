@@ -1,5 +1,7 @@
 import type { PeerView } from '@lanfly/common';
 
+import { t } from 'jinge';
+
 import Avatar from './Avatar';
 import Button from './Button';
 
@@ -16,9 +18,9 @@ export default function PeerList(props: {
     <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-2 py-1">
       {props.peers.length === 0 && (
         <div className="px-3 py-8 text-center text-[11.5px] leading-relaxed text-neutral-80">
-          正在寻找局域网设备…
+          {t('正在寻找局域网设备…')}
           <br />
-          {props.readOnly ? '等待接入主机发现设备' : '也可以右上角手动添加 IP'}
+          {props.readOnly ? t('等待接入主机发现设备') : t('也可以右上角手动添加 IP')}
         </div>
       )}
       {props.peers.map((peer) => (
@@ -42,8 +44,8 @@ export default function PeerList(props: {
                 {peer.manual && (
                   <span
                     className="icon-[codicon--plug] shrink-0 text-[11px] text-neutral-70"
-                    title="手动添加的设备"
-                    aria-label="手动添加的设备"
+                    title={t('手动添加的设备')}
+                    aria-label={t('手动添加的设备')}
                   />
                 )}
               </span>
@@ -52,7 +54,7 @@ export default function PeerList(props: {
                   ? peer.kind === 'browser'
                     ? peer.host
                     : `${peer.host}:${peer.port}`
-                  : '离线'}
+                  : t('离线')}
               </span>
             </span>
             {props.unread[peer.id] > 0 && (
@@ -67,8 +69,8 @@ export default function PeerList(props: {
                 <Button
                   size="icon"
                   className="text-neutral-90 hover:text-blue-40"
-                  title={`重新连接 ${peer.name}`}
-                  aria-label={`重新连接 ${peer.name}`}
+                  title={t('重新连接 {name}', { name: peer.name })}
+                  aria-label={t('重新连接 {name}', { name: peer.name })}
                   on:click={(event) => {
                     event.stopPropagation();
                     props.onReconnect(peer);
@@ -80,8 +82,8 @@ export default function PeerList(props: {
               <Button
                 size="icon"
                 className="text-neutral-90 hover:text-red-40"
-                title={`移除 ${peer.name}`}
-                aria-label={`移除 ${peer.name}`}
+                title={t('移除 {name}', { name: peer.name })}
+                aria-label={t('移除 {name}', { name: peer.name })}
                 on:click={(event) => {
                   event.stopPropagation();
                   props.onRemove(peer.id);

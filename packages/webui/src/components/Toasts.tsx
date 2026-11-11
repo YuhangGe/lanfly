@@ -1,3 +1,5 @@
+import { t } from 'jinge';
+
 import type { Toast } from '../types';
 
 import Button from './Button';
@@ -31,7 +33,7 @@ export default function Toasts(props: { toasts: Toast[]; onDismiss: (id: number)
           <Button
             size="bare"
             className="-mt-1 -mr-1 shrink-0 p-1 text-[14px] opacity-60 hover:opacity-100"
-            aria-label="关闭提示"
+            aria-label={t('关闭提示')}
             on:click={() => props.onDismiss(toast.id)}
           >
             <span className="icon-[codicon--close]" aria-hidden="true" />

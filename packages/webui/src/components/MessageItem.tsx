@@ -1,4 +1,5 @@
 import { formatBytes, formatClock, type TransferView } from '@lanfly/common';
+import { t } from 'jinge';
 
 import type { UiMessage } from '../types';
 
@@ -42,32 +43,32 @@ function errorLabel(code: string): string {
 }
 
 function transferLabel(transfer: TransferView | undefined): string {
-  if (!transfer) return '文件';
-  if (transfer.expired) return '下载邀请已过期';
+  if (!transfer) return t('文件');
+  if (transfer.expired) return t('下载邀请已过期');
   switch (transfer.status) {
     case 'offering':
-      return '等待对方确认…';
+      return t('等待对方确认…');
     case 'ready':
       return transfer.deferred
         ? transfer.direction === 'out'
-          ? '等待对方下载 · 邀请有效 30 分钟'
-          : '点击下载 · 发送页面需在线'
-        : '准备发送…';
+          ? t('等待对方下载 · 邀请有效 30 分钟')
+          : t('点击下载 · 发送页面需在线')
+        : t('准备发送…');
     case 'sending':
-      return transfer.direction === 'out' ? '发送中…' : '接收中…';
+      return transfer.direction === 'out' ? t('发送中…') : t('接收中…');
     case 'receiving':
-      return '接收中…';
+      return t('接收中…');
     case 'completed':
       if (transfer.direction === 'out') {
-        if (!transfer.expiresAt) return '已送达';
-        return transfer.downloadedAt ? '对方已下载' : '等待对方下载';
+        if (!transfer.expiresAt) return t('已送达');
+        return transfer.downloadedAt ? t('对方已下载') : t('等待对方下载');
       }
-      if (!transfer.downloadUrl) return '已保存到下载目录';
-      return transfer.downloadedAt ? '已下载 · 发送页面在线时可再次下载' : '可下载';
+      if (!transfer.downloadUrl) return t('已保存到下载目录');
+      return transfer.downloadedAt ? t('已下载 · 发送页面在线时可再次下载') : t('可下载');
     case 'failed':
-      return transfer.direction === 'out' ? '发送失败' : '接收失败';
+      return transfer.direction === 'out' ? t('发送失败') : t('接收失败');
     case 'canceled':
-      return '已取消';
+      return t('已取消');
   }
 }
 
@@ -206,7 +207,7 @@ export default function MessageItem(props: {
                       href={props.message.transfer.downloadUrl}
                       download
                     >
-                      下载文件
+                      {t('下载文件')}
                     </a>
                   )}
                 {isActive(props.message.transfer) &&
@@ -241,14 +242,14 @@ export default function MessageItem(props: {
                       className="mt-0.5 truncate text-[10px] text-neutral-80"
                       title={props.message.transfer.savedName}
                     >
-                      文件名：{props.message.transfer.savedName}
+                      {t('文件名：{name}', { name: props.message.transfer.savedName })}
                     </div>
                   )}
                 {props.message.transfer?.status === 'failed' && props.message.transfer.error && (
                   <div
                     className={`mt-0.5 truncate text-[10px] ${props.message.direction === 'out' ? 'text-white/65' : 'text-red-40'}`}
                   >
-                    错误：{errorLabel(props.message.transfer.error)}
+                    {t('错误：{error}', { error: errorLabel(props.message.transfer.error) })}
                   </div>
                 )}
               </div>
@@ -256,8 +257,8 @@ export default function MessageItem(props: {
                 <Button
                   size="icon"
                   className={`shrink-0 ${props.message.direction === 'out' ? 'text-white/70 hover:bg-white/15 hover:text-white' : 'text-neutral-90 hover:bg-white/10 hover:text-neutral-120'}`}
-                  title="取消传输"
-                  aria-label={`取消传输 ${props.message.transfer.file.name}`}
+                  title={t('取消传输')}
+                  aria-label={t('取消传输 {name}', { name: props.message.transfer.file.name })}
                   on:click={() => props.onCancel(props.message.transfer?.id ?? '')}
                 >
                   <span className="icon-[codicon--close] text-[14px]" aria-hidden="true" />
@@ -266,14 +267,14 @@ export default function MessageItem(props: {
             </div>
           )}
         </div>
-        {copyable && (
+        {props.message.kind === 'text' && Boolean(props.message.text) && (
           <Button
             size="bare"
             className={`absolute top-1 z-10 grid size-6 place-items-center rounded-[6px] border border-neutral-60 bg-neutral-30 text-neutral-90 opacity-0 shadow-toolbar transition-opacity duration-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100 max-[760px]:hidden ${
               props.message.direction === 'out' ? 'right-full mr-1' : 'left-full ml-1'
             }`}
-            title="复制消息"
-            aria-label="复制消息"
+            title={t('复制消息')}
+            aria-label={t('复制消息')}
             on:click={(event) => {
               event.stopPropagation();
               void copyMessage();
@@ -294,7 +295,7 @@ export default function MessageItem(props: {
                   className="icon-[codicon--loading] animate-spin text-[11px]"
                   aria-hidden="true"
                 />
-                发送中
+                {t('发送中')}
               </span>
             )}
           {props.message.direction === 'out' &&
@@ -302,7 +303,7 @@ export default function MessageItem(props: {
             props.message.status === 'sent' && (
               <span className="flex items-center gap-1 text-green-40">
                 <span className="icon-[codicon--check] text-[11px]" aria-hidden="true" />
-                已发送
+                {t('已发送')}
               </span>
             )}
           {props.message.direction === 'out' &&
@@ -310,12 +311,12 @@ export default function MessageItem(props: {
             props.message.status === 'failed' && (
               <span className="flex items-center gap-1 text-red-40">
                 <span className="icon-[codicon--error] text-[11px]" aria-hidden="true" />
-                发送失败
+                {t('发送失败')}
                 <button
                   className="cursor-pointer text-blue-40 underline underline-offset-2 hover:text-blue-50"
                   on:click={() => props.onRetry(props.message.id)}
                 >
-                  重试
+                  {t('重试')}
                 </button>
               </span>
             )}
