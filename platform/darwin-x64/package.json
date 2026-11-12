@@ -1,6 +1,6 @@
 {
   "name": "lanfly-input-darwin-x64",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "lanfly native macOS input sharing and remote desktop module",
   "license": "MIT",
   "repository": {
