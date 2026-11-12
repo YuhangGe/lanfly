@@ -8,6 +8,9 @@ pub trait Backend {
     fn enabled(&mut self) -> Vec<Self::Source>;
     fn is_ascii(&self, source: &Self::Source) -> bool;
     fn select(&mut self, source: &Self::Source) -> bool;
+    fn switch(&mut self, source: &Self::Source) -> bool {
+        self.select(source)
+    }
 }
 
 pub struct Controller<S> {
@@ -39,10 +42,13 @@ impl<S: Clone + PartialEq> Controller<S> {
         backend: &mut impl Backend<Source = S>,
     ) -> bool {
         if !remote {
-            if self.remote && self.guard_until.is_some() && !self.restore(backend) {
-                return false;
+            if self.remote {
+                self.remote = false;
+                self.guard_until = Some(now + Duration::from_millis(500));
             }
-            self.remote = false;
+            if self.guard_until.is_some_and(|until| now <= until) {
+                return self.restore(backend);
+            }
             self.guard_until = None;
             if self
                 .last_snapshot
@@ -61,14 +67,9 @@ impl<S: Clone + PartialEq> Controller<S> {
             }
             self.remote = true;
         }
-        if switching {
-            self.guard_until = Some(now + Duration::from_millis(500));
-        }
-        if self.guard_until.is_some_and(|until| now <= until) {
-            return self.restore(backend);
-        }
-        self.guard_until = None;
-        true
+        // Caps can change the OS source without delivering a recognizable tap event.
+        // Preserve the source for the entire capture, not just after a notification.
+        self.restore(backend)
     }
     fn restore(&self, backend: &mut impl Backend<Source = S>) -> bool {
         match (&self.local, backend.current()) {
@@ -96,7 +97,7 @@ impl<S: Clone + PartialEq> Controller<S> {
                 .filter(|s| *s != current && enabled.contains(s) && backend.is_ascii(s))
                 .or_else(|| enabled.iter().find(|s| backend.is_ascii(s)).cloned())
         };
-        target.is_none_or(|source| backend.select(&source))
+        target.is_none_or(|source| backend.switch(&source))
     }
 }
 
@@ -181,5 +182,23 @@ mod tests {
         b.sources = vec![0];
         assert!(controller.toggle(&mut b));
         assert!(b.selections.is_empty());
+    }
+    #[test]
+    fn restores_during_capture_without_a_caps_notification_and_after_exit() {
+        let mut controller = Controller::default();
+        let mut b = backend(1);
+        let now = Instant::now();
+        controller.capture(true, false, now, &mut b);
+        b.current = 0;
+        assert!(controller.capture(true, false, now + Duration::from_secs(2), &mut b));
+        assert_eq!(b.current, 1);
+        controller.capture(false, false, now + Duration::from_secs(3), &mut b);
+        b.current = 0;
+        controller.capture(false, false, now + Duration::from_millis(3100), &mut b);
+        assert_eq!(b.current, 1);
+        controller.capture(false, false, now + Duration::from_secs(4), &mut b);
+        b.current = 0;
+        controller.capture(false, false, now + Duration::from_secs(5), &mut b);
+        assert_eq!(b.current, 0);
     }
 }

@@ -211,6 +211,7 @@ struct State {
     buttons: BTreeSet<u32>,
     physical_keys: BTreeSet<u16>,
     input_source_key: InputSourceKey,
+    raw_caps: bool,
     physical_buttons: BTreeSet<u32>,
     queue: Vec<Value>,
     tick: Instant,
@@ -231,6 +232,7 @@ impl Default for State {
             buttons: BTreeSet::new(),
             physical_keys: BTreeSet::new(),
             input_source_key: InputSourceKey::default(),
+            raw_caps: false,
             physical_buttons: BTreeSet::new(),
             queue: Vec::new(),
             tick: Instant::now(),
@@ -415,6 +417,13 @@ fn thread_main(ready: mpsc::SyncSender<Result<(), String>>, activate: mpsc::Rece
         let mode =
             CFStringCreateWithCString(null_mut(), c"kCFRunLoopDefaultMode".as_ptr(), 0x08000100);
         CFRunLoopAddSource(CFRunLoopGetCurrent(), source, mode);
+        let raw_caps = std::env::var("LANFLY_CAPS_CAPTURE").as_deref() != Ok("tap")
+            && crate::hid::monitor_caps(caps_pressed);
+        state().lock().unwrap().raw_caps = raw_caps;
+        macos_input_source::trace(&format!(
+            "caps capture={}",
+            if raw_caps { "hid" } else { "tap" }
+        ));
         if ready.send(Ok(())).is_err() || activate.recv().is_err() {
             CFMachPortInvalidate(tap);
             CFRelease(source);
@@ -445,6 +454,14 @@ fn thread_main(ready: mpsc::SyncSender<Result<(), String>>, activate: mpsc::Rece
     }
 }
 
+extern "C" fn caps_pressed() {
+    let mut s = state().lock().unwrap();
+    if s.enabled && s.server && s.remote && s.queue.len() < 1024 {
+        s.queue.push(json!({"kind":"input-source"}));
+        macos_input_source::trace("physical caps press -> input-source");
+    }
+}
+
 pub fn start(role: &str, edge: &str) -> Result<(), String> {
     if !matches!(role, "server" | "client") || !matches!(edge, "left" | "right" | "top" | "bottom")
     {
@@ -470,6 +487,9 @@ pub fn start(role: &str, edge: &str) -> Result<(), String> {
             .send(())
             .map_err(|_| "INPUT_NATIVE_ERROR".to_string())
     })?;
+    if role == "server" && !macos_input_source::capture(false, false) {
+        return Err("INPUT_SOURCE_FAILED".into());
+    }
     let mut s = state().lock().unwrap();
     release(&mut s);
     s.server = role == "server";
@@ -596,9 +616,17 @@ extern "C" fn callback(_proxy: Ref, kind: u32, event: Ref, _user: Ref) -> Ref {
         s.queue.push(json!({"kind":"fault"}));
         return event;
     }
+    if s.raw_caps && matches!(kind, 10..=12) && matches!(key, 57 | 255) {
+        // The raw HID callback emits one action per physical press. Suppress both
+        // Quartz representations without generating another source action here.
+        return null_mut();
+    }
     if let Some(switching) = s.input_source_key.update(kind, key, flags) {
         if switching {
             s.queue.push(json!({"kind":"input-source"}));
+            macos_input_source::trace(&format!(
+                "tap caps t={kind} key={key} flags={flags:#x} -> input-source"
+            ));
         }
         return null_mut();
     }
@@ -700,7 +728,8 @@ pub fn inject(value: &str) -> Result<(), String> {
             return Ok(());
         }
         drop(s);
-        return if crate::hid::post_caps_lock() || macos_input_source::toggle() {
+        macos_input_source::trace("received input-source (sharing)");
+        return if macos_input_source::toggle() {
             Ok(())
         } else {
             Err("INPUT_SOURCE_FAILED".into())

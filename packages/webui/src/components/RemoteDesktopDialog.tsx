@@ -693,6 +693,21 @@ export default function RemoteDesktopDialog(props: {
                 )}
             </div>
             <div className="flex shrink-0 gap-1.5">
+              {model.phase === 'connected' &&
+                model.session?.role === 'controller' &&
+                model.controlGranted && (
+                  <Button
+                    size="compact"
+                    variant="secondary"
+                    disabled={!model.controlReady}
+                    on:click={() => {
+                      control?.switchInputSource();
+                      stage.value?.focus({ preventScroll: true });
+                    }}
+                  >
+                    {t('切换远端输入法')}
+                  </Button>
+                )}
               {model.phase === 'connected' && model.session?.role === 'controller' && (
                 <Button
                   size="compact"

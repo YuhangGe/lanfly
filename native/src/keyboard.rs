@@ -7,7 +7,8 @@ pub const INPUT_SOURCE_KEY: u16 = 0xff;
 #[derive(Default)]
 pub struct InputSourceKey {
     pressed: bool,
-    caps_at: Option<Instant>,
+    caps_lock: Option<bool>,
+    last_action: Option<(Instant, u16)>,
 }
 impl InputSourceKey {
     /// One action per physical press, ignoring the release and duplicate notifications.
@@ -15,30 +16,36 @@ impl InputSourceKey {
         self.update_at(kind, key, flags, Instant::now())
     }
 
-    /// Caps Lock is commonly configured in macOS to switch input sources. In a keyboard/mouse
-    /// session its flagsChanged event must be treated as a source toggle even when macOS reports
-    /// only the regular AlphaShift flag; otherwise the local source changes and the peer receives
-    /// an ordinary Caps Lock key. Debounce press/release pairs so one physical press toggles once.
+    /// Fallback for peers/devices without raw HID observation. Stateless Caps flags
+    /// describe physical edges; AlphaShift alone describes a latched lock state.
+    /// Only coalesce different key codes that represent the same notification.
     pub fn update_at(&mut self, kind: u32, key: u16, flags: u64, now: Instant) -> Option<bool> {
-        if kind != 12 {
+        if !matches!(key, 57 | INPUT_SOURCE_KEY) || !matches!(kind, 10..=12) {
             return None;
         }
-        if key == 57 {
-            if self
-                .caps_at
-                .is_some_and(|last| now.duration_since(last) < Duration::from_millis(300))
-            {
+        let alpha = flags & (1 << 16) != 0;
+        let toggle = if kind == 10 || (kind == 12 && flags & 0x0100_0080 != 0) {
+            let edge = !self.pressed;
+            self.pressed = true;
+            self.caps_lock = Some(alpha);
+            edge
+        } else if kind == 11 || key == INPUT_SOURCE_KEY || self.pressed {
+            self.pressed = false;
+            self.caps_lock = Some(alpha);
+            false
+        } else {
+            let changed = self.caps_lock != Some(alpha);
+            self.caps_lock = Some(alpha);
+            changed
+        };
+        if toggle {
+            if self.last_action.is_some_and(|(last, code)| {
+                code != key && now.duration_since(last) < Duration::from_millis(50)
+            }) {
                 return Some(false);
             }
-            self.caps_at = Some(now);
-            return Some(true);
+            self.last_action = Some((now, key));
         }
-        if key != INPUT_SOURCE_KEY {
-            return None;
-        }
-        let down = flags & 0x0100_0080 != 0;
-        let toggle = down && !self.pressed;
-        self.pressed = down;
         Some(toggle)
     }
 }
@@ -102,21 +109,61 @@ mod tests {
         assert_eq!(key.update(12, INPUT_SOURCE_KEY, 0x0100_0080), Some(true));
     }
     #[test]
-    fn caps_lock_is_a_debounced_input_source_toggle() {
+    fn stateless_caps_release_does_not_toggle_even_after_a_long_hold() {
         let mut key = InputSourceKey::default();
         let now = Instant::now();
-        assert_eq!(key.update_at(12, 57, 1 << 16, now), Some(true));
+        assert_eq!(key.update_at(12, 57, 0x0100_0080, now), Some(true));
         assert_eq!(
-            key.update_at(12, 57, 0, now + Duration::from_millis(4)),
+            key.update_at(12, 57, 0, now + Duration::from_millis(500)),
             Some(false)
         );
         assert_eq!(key.update_at(12, 56, 1 << 17, now), None);
         assert_eq!(
-            key.update_at(12, 57, 0x0100_0080, now + Duration::from_millis(500)),
+            key.update_at(12, 57, 0x0100_0080, now + Duration::from_millis(600)),
             Some(true)
         );
         assert_eq!(
-            key.update_at(12, 57, 1 << 16, now + Duration::from_millis(504)),
+            key.update_at(12, 57, 0, now + Duration::from_millis(604)),
+            Some(false)
+        );
+    }
+    #[test]
+    fn quick_presses_and_latched_caps_transitions_are_not_debounced_away() {
+        let mut key = InputSourceKey::default();
+        let now = Instant::now();
+        assert_eq!(key.update_at(12, 57, 1 << 16, now), Some(true));
+        assert_eq!(key.update_at(12, 57, 1 << 16, now), Some(false));
+        assert_eq!(
+            key.update_at(12, 57, 0, now + Duration::from_millis(100)),
+            Some(true)
+        );
+        let mut key = InputSourceKey::default();
+        assert_eq!(key.update_at(12, 57, 0x0100_0080, now), Some(true));
+        assert_eq!(
+            key.update_at(12, 57, 0, now + Duration::from_millis(10)),
+            Some(false)
+        );
+        assert_eq!(
+            key.update_at(12, 57, 0x0100_0080, now + Duration::from_millis(100)),
+            Some(true)
+        );
+    }
+    #[test]
+    fn caps_and_input_source_companion_notifications_produce_one_action() {
+        let mut key = InputSourceKey::default();
+        let now = Instant::now();
+        assert_eq!(key.update_at(12, 57, 1 << 16, now), Some(true));
+        assert_eq!(
+            key.update_at(
+                12,
+                INPUT_SOURCE_KEY,
+                0x0100_0080,
+                now + Duration::from_millis(4)
+            ),
+            Some(false)
+        );
+        assert_eq!(
+            key.update_at(12, INPUT_SOURCE_KEY, 0, now + Duration::from_millis(8)),
             Some(false)
         );
     }

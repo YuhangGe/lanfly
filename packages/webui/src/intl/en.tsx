@@ -129,6 +129,7 @@ export default {
   Oj85cC: 'Send file',
   Otz46V: 'Request system permissions',
   P7QUlF: 'Select a device first',
+  P9bDY9: 'Switch remote input source',
   PAFL75: 'Sharing screen',
   PK74R4: 'Invalid remote desktop parameters.',
   'PL+Gta': 'Invalid request parameters',

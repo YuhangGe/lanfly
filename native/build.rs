@@ -4,6 +4,12 @@ fn main() {
     }
 
     cc::Build::new()
+        .file("src/input_source_bridge.m")
+        .flag("-fobjc-arc")
+        .flag("-mmacosx-version-min=12.0")
+        .compile("lanfly_input_source");
+
+    cc::Build::new()
         .file("src/desktop_capture.mm")
         .flag("-fobjc-arc")
         .flag("-fblocks")
@@ -19,6 +25,8 @@ fn main() {
     println!("cargo:rustc-link-lib=framework=CoreGraphics");
     println!("cargo:rustc-link-lib=framework=VideoToolbox");
     println!("cargo:rustc-link-lib=framework=Foundation");
+    println!("cargo:rustc-link-lib=framework=IOKit");
     println!("cargo:rustc-link-lib=c++");
-    println!("cargo:rerun-if-changed=src/desktop_capture.mmm");
+    println!("cargo:rerun-if-changed=src/desktop_capture.mm");
+    println!("cargo:rerun-if-changed=src/input_source_bridge.m");
 }

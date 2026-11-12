@@ -171,6 +171,7 @@ Kkca8X,src/components/RemoteDesktopDialog.tsx,点击画面后可使用鼠标和�
 MLr9kg,src/components/RemoteDesktopDialog.tsx,远程设备,远程设备,遠端裝置,Remote device
 MPfUCd,src/components/RemoteDesktopDialog.tsx,正在向 {name} 共享屏幕，鼠标键盘控制已同时开启。,正在向 {name} 共享屏幕，鼠标键盘控制已同时开启。,正在向 {name} 共享螢幕，滑鼠鍵盤控制已同時開啟。,Sharing your screen with {name}; keyboard and mouse control is enabled.
 Otz46V,src/components/RemoteDesktopDialog.tsx,请求系统授权,请求系统授权,請求系統授權,Request system permissions
+P9bDY9,src/components/RemoteDesktopDialog.tsx,切换远端输入法,切换远端输入法,切換遠端輸入法,Switch remote input source
 RgEWCL,src/components/RemoteDesktopDialog.tsx,SDP 交换失败,SDP 交换失败,SDP 交換失敗,SDP exchange failed
 SVemw7,src/components/RemoteDesktopDialog.tsx,会话已停止。,会话已停止。,會話已停止。,The session has stopped.
 UMU42c,src/components/RemoteDesktopDialog.tsx,选择设备,选择设备,選擇裝置,Select a device

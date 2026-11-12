@@ -1,3 +1,5 @@
+import { CapsLockPress } from './caps-lock';
+
 /** macOS virtual key codes for KeyboardEvent.code. */
 const MAC_KEY_CODES: Record<string, number> = {
   Escape: 53,
@@ -145,7 +147,7 @@ export class DesktopControl {
   #frame = 0;
   #pending: Point | null = null;
   #attached = false;
-  #capsDown = false;
+  #capsPress = new CapsLockPress();
   #keyboardLocked = false;
 
   constructor(
@@ -167,9 +169,8 @@ export class DesktopControl {
     this.#listen(this.stage, 'contextmenu', (event) => event.preventDefault());
     this.#listen(this.stage, 'keydown', (event) => this.#key(event as KeyboardEvent, true));
     this.#listen(this.stage, 'keyup', (event) => this.#key(event as KeyboardEvent, false));
-    // Caps Lock is also a macOS input-source shortcut. Capture it at window level so the
-    // browser gets a chance to suppress the local switch, and send a source toggle instead
-    // of forwarding the raw Caps Lock key to the controlled Mac.
+    // Capture only while the remote stage owns focus. DOM cancellation does not
+    // guarantee suppression of macOS's own input-source shortcut.
     this.#listen(window, 'keydown', (event) => this.#caps(event as KeyboardEvent, true), {
       capture: true,
     });
@@ -199,7 +200,7 @@ export class DesktopControl {
 
   release(): void {
     this.#buttons.clear();
-    this.#capsDown = false;
+    this.#capsPress.reset();
     this.#send({ t: 'release' });
     this.#unlockKeyboard();
   }
@@ -232,15 +233,16 @@ export class DesktopControl {
   }
 
   #caps(event: KeyboardEvent, down: boolean): void {
-    if (event.code !== 'CapsLock') return;
+    if (event.code !== 'CapsLock' || !this.stage.contains(document.activeElement)) return;
     event.preventDefault();
     event.stopImmediatePropagation();
-    if (down && !this.#capsDown) {
-      this.#capsDown = true;
-      this.#send({ t: 'source' });
-    } else if (!down) {
-      this.#capsDown = false;
+    if (this.#capsPress.update(down, event.getModifierState('CapsLock'), event.repeat)) {
+      this.switchInputSource();
     }
+  }
+
+  switchInputSource(): void {
+    if (this.#attached) this.#send({ t: 'source' });
   }
 
   #listen(
