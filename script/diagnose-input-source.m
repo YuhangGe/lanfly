@@ -123,13 +123,15 @@ static BOOL postHID(NSString *mode) {
 }
 
 static void usage(void) {
-  fprintf(stderr, "Usage: diagnose-input-source status | watch | suppress | hid-alpha | hid-stateless | hid-key | shortcut | tis SOURCE_ID\n"
+  fprintf(stderr, "Usage: diagnose-input-source status | watch | suppress | hid-alpha | hid-stateless | hid-key | shortcut | tis SOURCE_ID [--no-delay]\n"
       "status: read-only; watch: listen-only for 30s; suppress: swallow Caps/255 at HID tap for 30s.\n"
       "Injection/TIS modes wait 3s for focus, then observe for 1s. shortcut sends Control-Space (verify your binding).\n");
 }
 
 int main(int argc, const char **argv) {
   @autoreleasepool {
+    BOOL immediate = argc > 1 && strcmp(argv[argc - 1], "--no-delay") == 0;
+    if (immediate) argc--;
     started = CFAbsoluteTimeGetCurrent();
     NSString *mode = argc > 1 ? @(argv[1]) : @"status";
     NSArray *modes = @[@"status", @"watch", @"suppress", @"hid-alpha", @"hid-stateless", @"hid-key", @"shortcut", @"tis"];
@@ -163,8 +165,8 @@ int main(int argc, const char **argv) {
       if (hid) { CFMachPortInvalidate(hid); CFRelease(hid); }
       if (session) { CFMachPortInvalidate(session); CFRelease(session); }
     } else if (![mode isEqualToString:@"status"]) {
-      emit(@"countdown", @{@"seconds": @3, @"mode": mode});
-      pump(3);
+      emit(@"countdown", @{@"seconds": @(immediate ? 0 : 3), @"mode": mode});
+      if (!immediate) pump(3);
       sample(YES);
       if ([mode hasPrefix:@"hid-"]) {
         if (!postHID(mode)) exitCode = 1;

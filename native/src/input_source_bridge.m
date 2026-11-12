@@ -3,6 +3,7 @@
 #import <Foundation/Foundation.h>
 #import <ApplicationServices/ApplicationServices.h>
 #import <IOKit/hid/IOHIDManager.h>
+#include <unistd.h>
 
 static IOHIDManagerRef manager;
 static NSMutableSet<NSValue *> *pressedDevices;
@@ -84,22 +85,55 @@ int lanfly_input_source_shortcut(int64_t tag) {
           ![parameters[2] isKindOfClass:NSNumber.class]) continue;
       NSInteger key = [parameters[1] integerValue];
       if (key < 0 || key > 127) continue;
+      // System hotkeys require real modifier transitions, not just Control on
+      // a Space event. Restore previously held modifiers after the shortcut.
+      CGEventFlags flags = [parameters[2] unsignedLongLongValue] & 0x001e0000;
+      CGEventFlags saved = CGEventSourceFlagsState(kCGEventSourceStateCombinedSessionState);
+      const CGKeyCode keys[] = {56, 59, 58, 55};
+      const CGEventFlags masks[] = {kCGEventFlagMaskShift, kCGEventFlagMaskControl,
+                                   kCGEventFlagMaskAlternate, kCGEventFlagMaskCommand};
+      CGEventRef events[10] = {0};
+      size_t count = 0;
+      CGEventFlags current = flags & saved;
+      for (size_t i = 0; i < 4; i++) {
+        if (!(flags & masks[i]) || (saved & masks[i])) continue;
+        current |= masks[i];
+        CGEventRef event = CGEventCreateKeyboardEvent(NULL, keys[i], true);
+        events[count++] = event;
+        if (event) {
+          CGEventSetType(event, kCGEventFlagsChanged);
+          CGEventSetFlags(event, current);
+        }
+      }
       CGEventRef down = CGEventCreateKeyboardEvent(NULL, (CGKeyCode)key, true);
       CGEventRef up = CGEventCreateKeyboardEvent(NULL, (CGKeyCode)key, false);
-      if (!down || !up) {
-        if (down) CFRelease(down);
-        if (up) CFRelease(up);
-        return -1;
+      events[count++] = down;
+      events[count++] = up;
+      if (down) CGEventSetFlags(down, flags);
+      if (up) CGEventSetFlags(up, flags);
+      for (size_t i = 4; i-- > 0;) {
+        if (!(flags & masks[i]) || (saved & masks[i])) continue;
+        current &= ~masks[i];
+        CGEventRef event = CGEventCreateKeyboardEvent(NULL, keys[i], false);
+        events[count++] = event;
+        if (event) {
+          CGEventSetType(event, kCGEventFlagsChanged);
+          CGEventSetFlags(event, current | saved);
+        }
       }
-      CGEventFlags flags = [parameters[2] unsignedLongLongValue] & 0x00ff0000;
-      CGEventSetFlags(down, flags);
-      CGEventSetFlags(up, CGEventSourceFlagsState(kCGEventSourceStateCombinedSessionState));
-      CGEventSetIntegerValueField(down, kCGEventSourceUserData, tag);
-      CGEventSetIntegerValueField(up, kCGEventSourceUserData, tag);
-      CGEventPost(kCGHIDEventTap, down);
-      CGEventPost(kCGHIDEventTap, up);
-      CFRelease(down);
-      CFRelease(up);
+      // Also restore flags for a modifier-free shortcut or already-held chord.
+      if (events[count - 1]) CGEventSetFlags(events[count - 1], saved);
+      bool allocated = true;
+      for (size_t i = 0; i < count; i++) allocated = allocated && events[i] != NULL;
+      if (allocated) {
+        for (size_t i = 0; i < count; i++) {
+          CGEventSetIntegerValueField(events[i], kCGEventSourceUserData, tag);
+          CGEventPost(kCGHIDEventTap, events[i]);
+          if (events[i] == down) usleep(20000);
+        }
+      }
+      for (size_t i = 0; i < count; i++) if (events[i]) CFRelease(events[i]);
+      if (!allocated) return -1;
       return 1;
     }
     return 0;

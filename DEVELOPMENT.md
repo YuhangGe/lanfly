@@ -79,6 +79,20 @@ script/                构建、发布、原生打包脚本
 - 键盘使用 macOS virtual keycode 和修饰键 flags；窗口失焦、停止、断线时释放所有按下的键和鼠标按钮。
 - 键鼠事件通过 WebRTC DataChannel（DTLS 加密）发送，不经过 Node 转发。
 
+### macOS 输入源线程与回归
+
+TIS 操作统一在 macOS 主线程执行。该线程需要显式处理 CFRunLoop 的输入源变化通知；只运行 Node/libuv，或只处理一个后台线程的 CFRunLoop，会读到过期的输入源缓存。主线程 NAPI 调用直接执行，Tokio 的输入源动作经 Neon Channel 投递到主线程，完成后继续注入后续按键。Quartz tap 不执行 TIS。
+
+人工回归脚本会暂时切换当前输入源，并在结束时恢复；运行期间暂停正常键鼠操作和应用焦点切换：
+
+```sh
+./node_modules/.bin/bun script/test-input-source-guard.ts --both-directions
+# 也可经已连接的接收端执行：
+LANFLY_REMOTE_TIMEOUT_MS=600000 pnpm remote-test run script/test-input-source-guard.ts --both-directions
+```
+
+脚本编译使用正式输入源实现的 Rust fixture，通过另一个进程确认外部切换确实发生，再释放 fixture 执行恢复，最后独立查询结果。它不捕获键盘/鼠标，不能替代物理 Caps 的两机验收；产物默认在 `.tmp/input-source-guard`，远程执行时归入对应任务的产物目录。
+
 ## 启动页面检测与刷新
 
 - 服务启动后等待本地页面重连：已使用新版本页面的场景约 1.2 秒，旧版页面首次升级兜底 3.2 秒。
@@ -165,6 +179,46 @@ pnpm test          # 单元 + 双实例集成测试
 - `cargo test --manifest-path native/Cargo.toml --locked`：原生边界逻辑和输入校验。
 - `pnpm typecheck`、`pnpm lint` 检查 TypeScript 和代码风格。
 - 真实设备验收需要两台已授权的单屏 Mac，覆盖边缘切换、修饰键/鼠标释放、滚动、断网、紧急停止、显示器热插拔和远程桌面权限/画质。
+
+## 两台 Mac 的远程调试
+
+`script/remote-test.ts` 是独立于产品服务的开发工具。接收端只需持续运行一次，控制端可反复发送新脚本、更新指定源码文件，并取回日志和截图。持有令牌即可在接收端执行当前用户权限下的任意脚本，只用于可信局域网，结束时在接收端按 Ctrl+C。
+
+接收端同步源码、安装依赖后，在已经授予辅助功能、输入监控及屏幕录制权限的终端中启动：
+
+```sh
+pnpm remote-test serve
+```
+
+默认监听所有网卡的 `8098` 端口。终端会显示 `LANFLY_REMOTE_URL=... LANFLY_REMOTE_TOKEN=...`；把这行交给当前调试会话即可。首次生成的随机令牌保存在被 Git 忽略的 `.tmp/remote-test/token`，重启沿用；可通过同名环境变量指定令牌，通过 `LANFLY_REMOTE_PORT` / `LANFLY_REMOTE_HOST` 指定端口与监听地址。首次启动如有系统入站连接提示，需要允许该终端/Bun 接收局域网连接。
+
+控制端设置接收端提供的两个变量后使用：
+
+```sh
+export LANFLY_REMOTE_URL=http://192.168.1.20:8098
+export LANFLY_REMOTE_TOKEN=接收端输出的令牌
+
+pnpm remote-test status
+pnpm remote-test run script/remote-input-probe.ts
+pnpm remote-test run script/remote-input-probe.ts --screenshot
+
+# 只同步列出的源码，不执行 git pull、不覆盖整份工作区。
+pnpm remote-test push native/src/macos_input_source.rs native/src/input_source_bridge.m
+
+# 本地脚本会以文件内容发送，接收端无需事先拥有同名文件。
+# 重建等较长的任务可提高超时上限（最高 600000ms）。
+LANFLY_REMOTE_TIMEOUT_MS=600000 pnpm remote-test run .tmp/remote-rebuild.sh
+pnpm remote-test cancel 任务ID
+pnpm remote-test get 任务ID
+```
+
+`remote-input-probe.ts` 是第一份可随时更新的任务脚本，默认只读：记录原生模块权限、输入源、系统与代码版本；`--screenshot` 额外采集屏幕。它不自动启动 lanfly，不注入按键或切换输入法。后续的构建、启动、按键、鼠标测试可写进新的任务脚本再发送。
+
+任务以接收端仓库为工作目录，支持 Bun TypeScript（默认）、`.mjs` 的 Node 和 `.sh` 的 `/bin/sh`。传入脚本的参数原样保留。脚本可通过 `LANFLY_REMOTE_ROOT` 取得仓库目录，通过 `LANFLY_REMOTE_ARTIFACTS` 取得本任务产物目录；把截图等文件直接写到产物目录，控制端会自动下载。任务脚本位于临时目录，导入仓库代码时应从仓库绝对路径加载，不要使用相对任务文件的导入路径。
+
+每次只运行一个任务，任务运行时禁止同步源码；默认超时 120 秒，超时或取消会终止任务及其普通子进程。每路输出保留末尾 1 MiB，单个产物上限 20 MiB。接收端结果位于 `.tmp/remote-test/jobs/任务ID`，控制端下载位于 `.tmp/remote-test/downloads/任务ID`，其中 `result.json` 是执行结果、`artifacts/` 保存截图等产物。
+
+源码同步校验 SHA-256，覆盖前把旧文件备份到 `.tmp/remote-test/backups/备份ID`；新文件也会记在备份清单中。同步仅接受明确指定的相对文件路径，拒绝符号链接、父目录跳转、隐藏目录、`data.json`、构建产物及跨架构的 `.node` 文件。同步后需要通过任务脚本在接收端重新编译 native，并重启使用旧 addon 的 lanfly 进程。接收端自身的协议代码更新仍需重启接收端，普通任务脚本更新无需重启。
 
 ## 已知限制
 

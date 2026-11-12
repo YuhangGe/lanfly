@@ -1,10 +1,13 @@
-//! All TIS access and source memory live on one worker for this non-UI Node CLI.
-//! Neither Tokio nor the event tap accesses Carbon. Calls complete before subsequent
-//! remote key injection, so text cannot overtake an input-source switch.
+//! TIS access and source memory belong to macOS's main thread. Its distributed
+//! input-source notifications require the main CFRunLoop, which Node/libuv does
+//! not pump. Tokio callers dispatch through Neon; the event tap never calls TIS.
 use crate::input_source::{Backend, Controller};
+use neon::event::Channel;
+use std::cell::RefCell;
 use std::ffi::c_void;
 use std::ptr::null_mut;
-use std::sync::{OnceLock, mpsc};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock, mpsc};
 use std::time::{Duration, Instant};
 
 type Ref = *mut c_void;
@@ -24,6 +27,8 @@ unsafe extern "C" {
 }
 #[link(name = "CoreFoundation", kind = "framework")]
 unsafe extern "C" {
+    static kCFRunLoopDefaultMode: Ref;
+    fn CFRunLoopRunInMode(mode: Ref, seconds: f64, return_after_source: bool) -> i32;
     fn CFRelease(value: Ref);
     fn CFRetain(value: Ref) -> Ref;
     fn CFEqual(a: Ref, b: Ref) -> bool;
@@ -87,11 +92,22 @@ impl Drop for Source {
         unsafe { CFRelease(self.0) };
     }
 }
-struct MacSources;
+#[derive(Default)]
+struct MacSources {
+    observed: Option<String>,
+}
 impl Backend for MacSources {
     type Source = Source;
     fn current(&mut self) -> Option<Source> {
-        Source::owned(unsafe { TISCopyCurrentKeyboardInputSource() })
+        let source = Source::owned(unsafe { TISCopyCurrentKeyboardInputSource() });
+        if trace_enabled() {
+            let identity = source.as_ref().map(Source::identity);
+            if identity != self.observed {
+                trace(&format!("observed source={identity:?}"));
+                self.observed = identity;
+            }
+        }
+        source
     }
     fn ascii(&mut self) -> Option<Source> {
         Source::owned(unsafe { TISCopyCurrentASCIICapableKeyboardInputSource() })
@@ -136,13 +152,13 @@ impl Backend for MacSources {
         applied
     }
     fn switch(&mut self, source: &Source) -> bool {
-        // CJK input modes can report a successful TIS selection without activating
-        // the IME correctly. Prefer the user's enabled system shortcut for toggles;
-        // explicit restoration still uses select(), never a blind second toggle.
+        // Prefer a concrete, verified target over a blind Caps injection. Some CJK
+        // modes need a system shortcut instead; expose that as a separate method,
+        // never chain two asynchronous switches and risk undoing the first one.
         let Some(before) = self.current() else {
             return false;
         };
-        if std::env::var("LANFLY_INPUT_SOURCE_METHOD").as_deref() != Ok("tis") {
+        if std::env::var("LANFLY_INPUT_SOURCE_METHOD").as_deref() == Ok("shortcut") {
             let posted = crate::hid::input_source_shortcut();
             if posted != 0 {
                 let applied = posted > 0
@@ -169,95 +185,123 @@ fn wait_until(mut ready: impl FnMut() -> bool) -> bool {
         if Instant::now() >= until {
             return false;
         }
+        pump();
         std::thread::sleep(Duration::from_millis(5));
     }
 }
 
-pub fn trace(message: &str) {
+fn pump() {
+    // CF distributed notifications are delivered on the process MAIN run loop.
+    // Pumping a worker's loop does not invalidate TIS's per-process cache.
+    unsafe { CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.001, true) };
+}
+
+fn trace_enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
-    if *ENABLED.get_or_init(|| std::env::var("LANFLY_INPUT_DEBUG").as_deref() == Ok("1")) {
+    *ENABLED.get_or_init(|| std::env::var("LANFLY_INPUT_DEBUG").as_deref() == Ok("1"))
+}
+
+pub fn trace(message: &str) {
+    if trace_enabled() {
         eprintln!("[lanfly:input-source] {message}");
     }
 }
 
-enum Command {
-    Capture {
-        remote: bool,
-        switching: bool,
-        reply: mpsc::SyncSender<bool>,
-    },
-    Toggle(mpsc::SyncSender<bool>),
+#[link(name = "System")]
+unsafe extern "C" {
+    fn pthread_main_np() -> i32;
+}
+fn is_main_thread() -> bool {
+    unsafe { pthread_main_np() != 0 }
 }
 
-fn commands() -> Option<&'static mpsc::SyncSender<Command>> {
-    static COMMANDS: OnceLock<Option<mpsc::SyncSender<Command>>> = OnceLock::new();
-    COMMANDS
-        .get_or_init(|| {
-            let (send, receive) = mpsc::sync_channel(16);
-            std::thread::Builder::new()
-                .name("lanfly-input-source".into())
-                .spawn(move || {
-                    let mut sources = Controller::default();
-                    let mut backend = MacSources;
-                    let mut remote = false;
-                    let mut lease = Instant::now();
-                    loop {
-                        match receive.recv_timeout(Duration::from_millis(20)) {
-                            Ok(Command::Capture {
-                                remote: next,
-                                switching,
-                                reply,
-                            }) => {
-                                if next != remote {
-                                    trace(&format!("capture remote={next}"));
-                                }
-                                remote = next;
-                                lease = Instant::now() + Duration::from_secs(1);
-                                let result = sources.capture(
-                                    remote,
-                                    switching,
-                                    Instant::now(),
-                                    &mut backend,
-                                );
-                                let _ = reply.send(result);
-                            }
-                            Ok(Command::Toggle(reply)) => {
-                                let result = sources.toggle(&mut backend);
-                                let _ = reply.send(result);
-                            }
-                            Err(mpsc::RecvTimeoutError::Timeout) => {
-                                if remote && Instant::now() >= lease {
-                                    remote = false;
-                                }
-                                // Preserve local input even when no Caps notification arrives.
-                                // A lease prevents a stalled JS thread retaining capture forever.
-                                sources.capture(remote, false, Instant::now(), &mut backend);
-                            }
-                            Err(mpsc::RecvTimeoutError::Disconnected) => break,
-                        }
-                    }
-                })
-                .ok()
-                .map(|_| send)
-        })
-        .as_ref()
+static MAIN: OnceLock<Channel> = OnceLock::new();
+pub fn initialize(channel: Channel) {
+    // A Node worker-thread environment is not the macOS main thread.
+    if is_main_thread() {
+        let _ = MAIN.set(channel);
+    }
 }
 
-fn request(command: impl FnOnce(mpsc::SyncSender<bool>) -> Command) -> bool {
-    let Some(commands) = commands() else {
+#[derive(Clone, Copy)]
+enum Action {
+    Capture { remote: bool, switching: bool },
+    Toggle,
+}
+
+#[derive(Default)]
+struct State {
+    sources: Controller<Source>,
+    backend: MacSources,
+    remote: bool,
+}
+thread_local! { static STATE: RefCell<State> = RefCell::new(State::default()); }
+
+fn on_main(action: Action) -> bool {
+    if !is_main_thread() {
+        return false;
+    }
+    pump();
+    STATE.with(|state| {
+        let mut state = state.borrow_mut();
+        let State {
+            sources,
+            backend,
+            remote,
+        } = &mut *state;
+        match action {
+            Action::Capture {
+                remote: next,
+                switching,
+            } => {
+                if next != *remote {
+                    trace(&format!(
+                        "capture remote={next} source={:?}",
+                        backend.current().as_ref().map(Source::identity)
+                    ));
+                    *remote = next;
+                }
+                sources.capture(next, switching, Instant::now(), backend)
+            }
+            Action::Toggle => sources.toggle(backend),
+        }
+    })
+}
+
+fn request(action: Action) -> bool {
+    // Never enqueue and synchronously wait on the Node/macOS main thread itself.
+    if is_main_thread() {
+        return on_main(action);
+    }
+    let Some(channel) = MAIN.get() else {
         return false;
     };
     let (reply, result) = mpsc::sync_channel(1);
-    commands.send(command(reply)).is_ok() && result.recv().unwrap_or(false)
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let pending = cancelled.clone();
+    if channel
+        .try_send(move |_| {
+            if !pending.load(Ordering::Acquire) {
+                let _ = reply.send(on_main(action));
+            }
+            Ok(())
+        })
+        .is_err()
+    {
+        return false;
+    }
+    match result.recv_timeout(Duration::from_secs(1)) {
+        Ok(result) => result,
+        Err(_) => {
+            cancelled.store(true, Ordering::Release);
+            false
+        }
+    }
 }
 
 pub fn capture(remote: bool, switching: bool) -> bool {
-    request(|reply| Command::Capture {
-        remote,
-        switching,
-        reply,
-    })
+    request(Action::Capture { remote, switching })
 }
 pub fn toggle() -> bool {
-    request(Command::Toggle)
+    request(Action::Toggle)
 }

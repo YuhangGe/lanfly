@@ -96,7 +96,7 @@ Turn two Macs into one keyboard and mouse setup. Useful when one Mac is connecte
 3. Select the other device, this device's role, and the client position, then click **Connect**. If one side is the host, the other automatically becomes the client.
 4. Move the mouse past the screen edge to switch Macs; move it back past the adjacent edge to return.
 
-Caps Lock is treated as an input-source switch: the controller's own input source is restored, and the other side switches its own source.
+Caps Lock is captured natively and sent as an input-source switch. The other Mac selects its own source, while the controller checks and restores its local source. This path does not depend on browser APIs. Physical-key compatibility across two Macs is still being tested; see [BUG.md](BUG.md) for diagnostics.
 
 Press **Ctrl + Option + Command + Esc** on either side or click **Stop Sharing** to stop both sides. Only one device can be connected at a time. Clipboard sync, cross-screen file dragging, and multi-finger gestures are not included. macOS only.
 

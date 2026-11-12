@@ -57,7 +57,7 @@ impl<S: Clone + PartialEq> Controller<S> {
                 self.local = backend.current();
                 self.last_snapshot = Some(now);
             }
-            return true;
+            return self.local.is_some();
         }
         if !self.remote {
             // If entering and pressing Caps Lock landed in one batch, retain the
@@ -74,7 +74,8 @@ impl<S: Clone + PartialEq> Controller<S> {
     fn restore(&self, backend: &mut impl Backend<Source = S>) -> bool {
         match (&self.local, backend.current()) {
             (Some(original), Some(current)) if original != &current => backend.select(original),
-            _ => true,
+            (Some(_), Some(_)) => true,
+            _ => false,
         }
     }
     /// Select the client's own last non-Latin source / last ASCII source. Never

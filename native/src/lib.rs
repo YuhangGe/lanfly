@@ -224,6 +224,12 @@ fn desktop_input(mut cx: FunctionContext) -> JsResult<JsUndefined> {
 
 #[neon::main]
 fn main(mut cx: ModuleContext) -> NeonResult<()> {
+    #[cfg(target_os = "macos")]
+    {
+        let mut channel = cx.channel();
+        channel.unref(&mut cx);
+        macos_input_source::initialize(channel);
+    }
     cx.export_function("status", status)?;
     cx.export_function("requestPermissions", permissions)?;
     cx.export_function("start", start)?;
