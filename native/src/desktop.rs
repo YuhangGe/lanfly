@@ -56,6 +56,7 @@ struct StartConfig {
     bitrate: u32,
     local_address: Option<String>,
     control: bool,
+    resolution: Option<crate::display_mode::Resolution>,
 }
 
 impl Default for StartConfig {
@@ -67,6 +68,7 @@ impl Default for StartConfig {
             bitrate: 4_000_000,
             local_address: None,
             control: false,
+            resolution: None,
         }
     }
 }
@@ -247,6 +249,7 @@ struct Session {
     width: u32,
     height: u32,
     bitrate: AtomicU64,
+    display_lease: Mutex<Option<crate::display_mode::DisplayLease>>,
 }
 
 impl Session {
@@ -440,6 +443,7 @@ impl Session {
             encoder.stop();
         }
         desktop_input::reset();
+        drop(self.display_lease.lock().unwrap().take());
         let pc = self.runtime.block_on(async { self.pc.lock().await.take() });
         if let Some(pc) = pc {
             let _ = self.runtime.block_on(async { pc.close().await });
@@ -654,6 +658,7 @@ pub fn status() -> Value {
         "available": true,
         "screenRecording": desktop_capture::screen_recording(),
         "accessibility": desktop_input::accessible(),
+        "inputMonitoring": crate::macos::input_monitoring(),
         "screens": displays.len(),
         "display": display,
         "session": session.map(|(width, height, id)| json!({"id": id, "width": width, "height": height})),
@@ -663,6 +668,7 @@ pub fn status() -> Value {
 pub fn request_permissions() {
     desktop_capture::request_screen_recording();
     desktop_input::request_permissions();
+    crate::macos::permissions();
 }
 
 pub fn start(session_id: &str, config_json: &str) -> Result<Value, String> {
@@ -683,6 +689,7 @@ pub fn start(session_id: &str, config_json: &str) -> Result<Value, String> {
         old.shutdown();
     }
 
+    let display_lease = crate::display_mode::DisplayLease::apply(config.resolution)?;
     let (capture_tx, capture_rx) = crossbeam_channel::bounded::<CapturedFrame>(2);
     let mut capture = Capture::start(config.max_width, config.max_height, config.fps, capture_tx)?;
     let force_keyframe = Arc::new(AtomicBool::new(true));
@@ -762,6 +769,7 @@ pub fn start(session_id: &str, config_json: &str) -> Result<Value, String> {
         width: actual_width,
         height: actual_height,
         bitrate: AtomicU64::new(config.bitrate as u64),
+        display_lease: Mutex::new(display_lease),
     });
     let width = actual_width;
     let height = actual_height;

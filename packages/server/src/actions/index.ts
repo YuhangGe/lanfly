@@ -8,11 +8,13 @@ import {
   inputSettingsSchema,
   inputConnectSchema,
   desktopRequestInput,
+  desktopDisplayInput,
   desktopAcceptInput,
   desktopRejectInput,
   desktopOfferInput,
   desktopIceInput,
   desktopBitrateInput,
+  desktopKeyboardInput,
 } from '@lanfly/common';
 
 import { defineAction, type ServerAction } from '../core/action';
@@ -69,6 +71,9 @@ export const inputForget = defineAction(async ({ app }) => app.input.forget());
 export const desktopStatus = defineAction(async ({ app }) => app.desktop.status());
 export const desktopPermissions = defineAction(async ({ app }) => app.desktop.permissions());
 export const desktopState = defineAction(async ({ app }) => app.desktop.state(app.identity.id));
+export const desktopDisplay = defineAction(desktopDisplayInput, async ({ app }, input) =>
+  app.desktop.displayModes(input.peerId),
+);
 export const desktopRequest = defineAction(desktopRequestInput, async ({ app }, input) =>
   app.desktop.request(app.identity.id, input),
 );
@@ -89,6 +94,9 @@ export const desktopStop = defineAction(desktopRejectInput, async ({ app }, inpu
 );
 export const desktopBitrate = defineAction(desktopBitrateInput, async ({ app }, input) =>
   app.desktop.setBitrate(app.identity.id, input.sessionId, input.bitrate),
+);
+export const desktopKeyboard = defineAction(desktopKeyboardInput, async ({ app }, input) =>
+  app.desktop.keyboard(app.identity.id, input),
 );
 
 export const actions = {
@@ -112,12 +120,14 @@ export const actions = {
   desktopPermissions,
   desktopState,
   desktopRequest,
+  desktopDisplay,
   desktopAccept,
   desktopReject,
   desktopOffer,
   desktopIce,
   desktopStop,
   desktopBitrate,
+  desktopKeyboard,
 } satisfies Record<string, ServerAction>;
 
 export type ActionName = keyof typeof actions;

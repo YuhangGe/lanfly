@@ -1,5 +1,8 @@
 import {
   DESKTOP_DEFAULT_BITRATE,
+  fitDesktopResolution,
+  type DesktopDisplayModes,
+  type DesktopResolutionChoice,
   type ActionResultError,
   type DesktopEvent,
   type DesktopIceCandidate,
@@ -10,6 +13,8 @@ import {
 } from '@lanfly/common';
 import {
   desktopIce,
+  desktopDisplay,
+  desktopKeyboard,
   desktopOffer,
   desktopPermissions,
   desktopRequest,
@@ -19,10 +24,13 @@ import {
 } from '@server';
 import { nextTick, onMount, ref, t, vm } from 'jinge';
 
+import type { KeyboardRequest } from '../service/desktop-keyboard';
+
 import { ActionError } from '../service/action';
 import { browserLocalAddress } from '../service/browser';
 import { onDesktopEvent } from '../service/desktop';
 import { DesktopControl } from '../service/desktop-input';
+import { DesktopViewport, type DesktopZoom } from '../service/desktop-viewport';
 import Button from './Button';
 import Dialog from './Dialog';
 import { onChanges } from './reactivity';
@@ -100,14 +108,25 @@ export default function RemoteDesktopDialog(props: {
     bitrates: {} as Record<string, number>,
     videoReady: false,
     fullscreen: false,
+    fullscreenTools: false,
     controlReady: false,
     width: 0,
     height: 0,
     lanAddress: '',
+    zoom: 'fit' as DesktopZoom,
+    pan: false,
+    expanded: true,
+    displayModes: null as DesktopDisplayModes | null,
+    displayLoading: false,
+    resolution: 'keep',
+    savedResolutions: {} as Record<string, DesktopResolutionChoice>,
+    resolutions: [] as { id: string; width: number; height: number }[],
   });
   const stage = ref<HTMLDivElement>();
   const video = ref<HTMLVideoElement>();
 
+  let viewport: DesktopViewport | undefined;
+  let displayRequest = 0;
   let mounted = true;
   let statusTimer: number | undefined;
   let unsubscribe: (() => void) | undefined;
@@ -130,6 +149,59 @@ export default function RemoteDesktopDialog(props: {
     const peer = props.peers.find((candidate) => candidate.id === peerId);
     const saved = peer ? model.bitrates[peer.name] : undefined;
     return saved !== undefined && BITRATE_OPTIONS.includes(saved) ? saved : DESKTOP_DEFAULT_BITRATE;
+  }
+
+  async function refreshDisplayModes() {
+    const revision = ++displayRequest;
+    const peerId = model.peerId;
+    model.displayModes = null;
+    model.resolutions = [];
+    model.resolution = 'keep';
+    model.displayLoading = false;
+    if (!peerId || model.session) return;
+    model.displayLoading = true;
+    const [error, result] = await desktopDisplay({ input: { peerId }, toastError: false });
+    if (!mounted || revision !== displayRequest) return;
+    model.displayLoading = false;
+    if (!error && result) {
+      model.displayModes = result;
+      model.resolutions = result.modes.map((mode) => ({
+        ...mode,
+        id: `${mode.width}x${mode.height}`,
+      }));
+      if (result.supported) {
+        const peer = props.peers.find((value) => value.id === model.peerId);
+        const saved = peer ? model.savedResolutions[peer.name] : undefined;
+        const value = typeof saved === 'object' ? `${saved.width}x${saved.height}` : saved;
+        if (value && (value === 'fit' || model.resolutions.some((mode) => mode.id === value))) {
+          await nextTick();
+          if (mounted && revision === displayRequest) model.resolution = value;
+        }
+      }
+    }
+  }
+
+  function requestedResolution() {
+    if (model.resolution === 'keep') return undefined;
+    const info = model.displayModes;
+    if (!info?.supported) return undefined;
+    if (model.resolution === 'fit') {
+      const display = model.status?.display;
+      return fitDesktopResolution(
+        info,
+        display?.width ?? Math.round(window.screen.width * window.devicePixelRatio),
+        display?.height ?? Math.round(window.screen.height * window.devicePixelRatio),
+      );
+    }
+    return info.modes.find((mode) => `${mode.width}x${mode.height}` === model.resolution);
+  }
+
+  function setView(zoom: DesktopZoom, pan = model.pan) {
+    control?.release();
+    stage.value?.blur();
+    model.zoom = zoom;
+    model.pan = zoom === 'fit' ? false : pan;
+    viewport?.setView(model.zoom, model.pan);
   }
 
   function selectPreferredBitrate(peerId: string) {
@@ -177,6 +249,7 @@ export default function RemoteDesktopDialog(props: {
       return;
     }
     model.bitrates = result?.bitrates ?? {};
+    model.savedResolutions = result?.resolutions ?? {};
     const sessions = result?.sessions ?? [];
     const initial = props.initialSessionId
       ? sessions.find((session) => session.sessionId === props.initialSessionId)
@@ -231,8 +304,12 @@ export default function RemoteDesktopDialog(props: {
     model.busy = true;
     model.error = '';
     try {
+      if (model.resolution === 'fit' && !props.browserMode) await refreshStatus();
+      const resolution = requestedResolution();
+      const resolutionChoice: DesktopResolutionChoice =
+        model.resolution === 'fit' ? 'fit' : (resolution ?? 'keep');
       const [error, session] = await desktopRequest({
-        input: { peerId: model.peerId, bitrate: model.bitrate },
+        input: { peerId: model.peerId, bitrate: model.bitrate, resolution, resolutionChoice },
         toastError: false,
       });
       if (!mounted) return;
@@ -265,18 +342,55 @@ export default function RemoteDesktopDialog(props: {
     };
     channel.onerror = () => {
       model.controlReady = false;
+      control?.detach();
     };
   }
 
   function maybeAttachControl() {
-    if (!model.controlGranted || !dc || dc.readyState !== 'open') return;
+    if (
+      props.minimized ||
+      model.phase !== 'connected' ||
+      model.session?.role !== 'controller' ||
+      !model.controlGranted ||
+      !dc ||
+      dc.readyState !== 'open'
+    )
+      return;
     const stageElement = stage.value;
     const videoElement = video.value;
-    if (!stageElement || !videoElement) return;
+    if (!stageElement || !videoElement || !videoElement.videoWidth) return;
+    if (!viewport) {
+      viewport = new DesktopViewport(stageElement, videoElement);
+      viewport.setView(model.zoom, model.pan);
+    }
     if (!control) {
-      control = new DesktopControl(stageElement, videoElement, (payload) => {
-        if (dc?.readyState === 'open') dc.send(JSON.stringify(payload));
-      });
+      const sessionId = model.session.sessionId;
+      const keyboard: KeyboardRequest | undefined = props.browserMode
+        ? undefined
+        : async (input) => {
+            const [error, result] = await desktopKeyboard({
+              input: { ...input, sessionId },
+              toastError: false,
+            });
+            if (error || !result) throw new Error(String(error?.code ?? 'DESKTOP_STATE'));
+            return result;
+          };
+      control = new DesktopControl(
+        stageElement,
+        videoElement,
+        (payload) => {
+          if (dc?.readyState === 'open') dc.send(JSON.stringify(payload));
+        },
+        keyboard,
+        (error) => {
+          model.error =
+            error === null
+              ? ''
+              : new ActionError({
+                  code: error instanceof Error ? error.message : 'INPUT_NATIVE_ERROR',
+                }).message;
+        },
+      );
     }
     control.attach();
   }
@@ -328,6 +442,7 @@ export default function RemoteDesktopDialog(props: {
             void nextTick().then(maybeAttachControl);
             break;
           case 'disconnected':
+            control?.detach();
             model.phase = 'connecting';
             break;
           case 'failed':
@@ -441,6 +556,8 @@ export default function RemoteDesktopDialog(props: {
   }
 
   function cleanupPeer() {
+    viewport?.destroy();
+    viewport = undefined;
     control?.detach();
     control = undefined;
     if (dc) {
@@ -483,6 +600,7 @@ export default function RemoteDesktopDialog(props: {
   async function stopSession(reason = 'STOPPED') {
     const session = model.session;
     cleanupPeer();
+    if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
     model.phase = 'ended';
     if (!session) return;
     const [error] = await desktopStop({
@@ -523,7 +641,7 @@ export default function RemoteDesktopDialog(props: {
   }
 
   async function toggleFullscreen() {
-    const element = stage.value;
+    const element = stage.value?.parentElement;
     if (!element) return;
     try {
       if (document.fullscreenElement) {
@@ -537,18 +655,20 @@ export default function RemoteDesktopDialog(props: {
     }
   }
 
-  onMount(() => {
+  function videoReady() {
     const element = video.value;
-    const metadata = () => {
-      model.videoReady = true;
-      if (video.value) {
-        model.width = video.value.videoWidth;
-        model.height = video.value.videoHeight;
-      }
-      maybeAttachControl();
-    };
+    if (!element?.videoWidth || !element.videoHeight) return;
+    model.videoReady = true;
+    model.width = element.videoWidth;
+    model.height = element.videoHeight;
+    viewport?.refresh();
+    maybeAttachControl();
+  }
+
+  onMount(() => {
     const fullscreen = () => {
       model.fullscreen = Boolean(document.fullscreenElement);
+      model.fullscreenTools = false;
     };
     const pagehide = () => {
       control?.release();
@@ -564,7 +684,6 @@ export default function RemoteDesktopDialog(props: {
         navigator.sendBeacon(url, new Blob([body], { type: 'application/json' }));
       }
     };
-    element?.addEventListener('loadedmetadata', metadata);
     document.addEventListener('fullscreenchange', fullscreen);
     window.addEventListener('pagehide', pagehide);
     unsubscribe = onDesktopEvent(handleEvent);
@@ -586,7 +705,6 @@ export default function RemoteDesktopDialog(props: {
       mounted = false;
       unsubscribe?.();
       window.clearInterval(statusTimer);
-      element?.removeEventListener('loadedmetadata', metadata);
       document.removeEventListener('fullscreenchange', fullscreen);
       window.removeEventListener('pagehide', pagehide);
       cleanupPeer();
@@ -594,20 +712,44 @@ export default function RemoteDesktopDialog(props: {
   });
 
   onChanges(() => {
-    if (!props.minimized && video.value?.srcObject) {
-      void video.value.play().catch(() => undefined);
+    if (props.minimized) {
+      control?.detach();
+      control = undefined;
+    } else {
+      if (video.value?.srcObject) void video.value.play().catch(() => undefined);
+      void nextTick().then(() => {
+        viewport?.refresh();
+        maybeAttachControl();
+      });
     }
   }, [[props, ['minimized']]]);
+
+  onChanges(() => {
+    void refreshDisplayModes();
+  }, [[model, ['peerId']]]);
 
   return (
     <Dialog
       title={t('远程桌面')}
-      size="screen"
+      size={model.session?.role === 'controller' && model.expanded ? 'viewport' : 'screen'}
+      placement={model.session?.role === 'controller' && model.expanded ? 'center' : 'top'}
+      className="flex flex-col"
       open={!props.minimized}
       onClose={() => void close()}
+      onMinimize={model.session && model.phase !== 'ended' ? minimize : undefined}
       canClose={!model.busy}
+      closeOnBackdrop={false}
     >
-      <div className="flex flex-col gap-3 text-[12px] text-neutral-90">
+      <div
+        className="desktop-session-view flex min-h-0 flex-1 flex-col gap-3 text-[12px] text-neutral-90"
+        on:pointerMove={(event) => {
+          if (model.fullscreen)
+            model.fullscreenTools = event.clientY <= (model.fullscreenTools ? 120 : 80);
+        }}
+        on:pointerLeave={() => {
+          model.fullscreenTools = false;
+        }}
+      >
         {!model.session && (
           <div className="rounded-control border border-neutral-50 bg-neutral-20 p-3">
             <p className="m-0 leading-relaxed text-neutral-80">
@@ -652,6 +794,33 @@ export default function RemoteDesktopDialog(props: {
                 </select>
               </label>
             </div>
+            <label className="mt-3 flex flex-col gap-1.5">
+              {t('远端显示尺寸')}
+              <select
+                aria-label={t('远端显示尺寸')}
+                value={model.resolution}
+                disabled={model.displayLoading || !model.displayModes?.supported}
+                className="rounded-control border border-neutral-60 bg-neutral-40 px-2.5 py-2 outline-none focus:border-blue-40"
+                on:change={(event) => {
+                  model.resolution = (event.target as HTMLSelectElement).value;
+                }}
+              >
+                <option value="keep">{t('保持当前分辨率')}</option>
+                {model.displayModes?.supported && <option value="fit">{t('适配主控屏幕')}</option>}
+                {model.resolutions.map((mode) => (
+                  <option key={mode.id} value={`${mode.width}x${mode.height}`}>
+                    {mode.width} × {mode.height}
+                  </option>
+                ))}
+              </select>
+              <span className="text-[10.5px] text-neutral-70">
+                {model.displayLoading
+                  ? t('正在读取支持的分辨率…')
+                  : model.displayModes?.supported
+                    ? t('按远端逻辑桌面尺寸选择，结束会话后恢复原设置。')
+                    : t('远端暂不支持分辨率选择，将保持当前设置。')}
+              </span>
+            </label>
             <p className="mt-3 mb-0 text-[11px] leading-relaxed text-neutral-70">
               {t('建立后会自动开启鼠标和键盘控制，不需要对方再确认。')}
             </p>
@@ -661,7 +830,7 @@ export default function RemoteDesktopDialog(props: {
               </span>
               <Button
                 variant="primary"
-                disabled={model.busy || !model.peerId}
+                disabled={model.busy || model.displayLoading || !model.peerId}
                 on:click={() => void startRequest()}
               >
                 {model.busy ? t('正在连接…') : t('开始远程桌面')}
@@ -671,7 +840,7 @@ export default function RemoteDesktopDialog(props: {
         )}
 
         {model.session && (
-          <div className="flex items-center justify-between gap-3 rounded-control border border-neutral-50 bg-neutral-20 px-3 py-2">
+          <div className="desktop-session-details flex items-center justify-between gap-3 rounded-control border border-neutral-50 bg-neutral-20 px-3 py-2">
             <div className="flex min-w-0 items-center gap-2">
               <span
                 className={`size-1.5 shrink-0 rounded-full ${
@@ -693,21 +862,6 @@ export default function RemoteDesktopDialog(props: {
                 )}
             </div>
             <div className="flex shrink-0 gap-1.5">
-              {model.phase === 'connected' &&
-                model.session?.role === 'controller' &&
-                model.controlGranted && (
-                  <Button
-                    size="compact"
-                    variant="secondary"
-                    disabled={!model.controlReady}
-                    on:click={() => {
-                      control?.switchInputSource();
-                      stage.value?.focus({ preventScroll: true });
-                    }}
-                  >
-                    {t('切换远端输入法')}
-                  </Button>
-                )}
               {model.phase === 'connected' && model.session?.role === 'controller' && (
                 <Button
                   size="compact"
@@ -717,23 +871,6 @@ export default function RemoteDesktopDialog(props: {
                 >
                   <span
                     className={`${model.fullscreen ? 'icon-[codicon--screen-normal]' : 'icon-[codicon--screen-full]'} text-[13px]`}
-                    aria-hidden="true"
-                  />
-                </Button>
-              )}
-              {(model.phase === 'waiting' ||
-                model.phase === 'connecting' ||
-                model.phase === 'connected' ||
-                model.phase === 'error') && (
-                <Button
-                  size="compact"
-                  variant="secondary"
-                  title={t('最小化远程桌面')}
-                  aria-label={t('最小化远程桌面')}
-                  on:click={minimize}
-                >
-                  <span
-                    className="icon-[codicon--chrome-minimize] text-[13px]"
                     aria-hidden="true"
                   />
                 </Button>
@@ -771,19 +908,122 @@ export default function RemoteDesktopDialog(props: {
 
         {model.session?.role === 'controller' && (
           <div
+            className={`desktop-view-tools ${model.fullscreenTools ? 'desktop-tools-near' : ''}`}
+          >
+            <div
+              className="desktop-view-toolbar flex shrink-0 flex-wrap items-center gap-2"
+              role="toolbar"
+              aria-label={t('远程桌面')}
+              on:mouseLeave={() => {
+                if (model.fullscreen && document.activeElement instanceof HTMLButtonElement)
+                  document.activeElement.blur();
+              }}
+              on:change={(event) => {
+                if (model.fullscreen && event.target instanceof HTMLSelectElement)
+                  event.target.blur();
+              }}
+            >
+              {model.fullscreen && (
+                <Button
+                  size="compact"
+                  variant="secondary"
+                  aria-label={t('退出全屏')}
+                  on:click={() => void toggleFullscreen()}
+                >
+                  <span
+                    className="mr-1 icon-[codicon--screen-normal] align-middle"
+                    aria-hidden="true"
+                  />
+                  {t('退出全屏')}
+                </Button>
+              )}
+              <Button
+                size="compact"
+                variant="secondary"
+                className="desktop-window-only"
+                on:click={() => {
+                  model.expanded = !model.expanded;
+                }}
+              >
+                {model.expanded ? t('普通窗口') : t('铺满窗口')}
+              </Button>
+              <label className="flex items-center gap-1.5">
+                {t('缩放')}
+                <select
+                  aria-label={t('缩放')}
+                  value={model.zoom}
+                  className="rounded-control border border-neutral-60 bg-neutral-40 px-2 py-1"
+                  on:change={(event) =>
+                    setView((event.target as HTMLSelectElement).value as DesktopZoom)
+                  }
+                >
+                  <option value="fit">{t('适应窗口')}</option>
+                  <option value="actual">{t('原始像素')}</option>
+                  <option value="1.25">125%</option>
+                  <option value="1.5">150%</option>
+                  <option value="2">200%</option>
+                  <option value="3">300%</option>
+                </select>
+              </label>
+              <Button
+                size="compact"
+                variant={model.pan ? 'primary' : 'secondary'}
+                disabled={model.zoom === 'fit'}
+                aria-label={t('拖动画面')}
+                aria-pressed={model.pan}
+                on:click={() => setView(model.zoom, !model.pan)}
+              >
+                <span className="mr-1 icon-[codicon--move] align-middle" aria-hidden="true" />
+                {t('拖动画面')}
+              </Button>
+              <span className="desktop-window-only text-[10.5px] text-neutral-70">
+                {t('放大后可启用拖动，或按住鼠标中键平移；滚轮仍控制远端。')}
+              </span>
+              {model.fullscreen && (
+                <>
+                  <Button
+                    size="bare"
+                    className="grid size-8 place-items-center rounded-control text-[17px]"
+                    title={t('最小化{title}', { title: t('远程桌面') })}
+                    aria-label={t('最小化{title}', { title: t('远程桌面') })}
+                    on:click={minimize}
+                  >
+                    <span className="icon-[codicon--chrome-minimize]" aria-hidden="true" />
+                  </Button>
+                  <Button
+                    size="bare"
+                    variant="danger"
+                    className="grid size-8 place-items-center rounded-control text-[17px]"
+                    title={t('停止远程桌面')}
+                    aria-label={t('停止远程桌面')}
+                    on:click={() => void stopSession('USER_STOPPED')}
+                  >
+                    <span className="icon-[codicon--debug-stop]" aria-hidden="true" />
+                  </Button>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
+        {model.session?.role === 'controller' && (
+          <div
             ref={stage}
             tabIndex={0}
             aria-label={t('远程桌面画面')}
-            className={`relative overflow-hidden rounded-control border border-neutral-60 bg-black outline-none ${
+            className={`desktop-stage relative touch-none overflow-hidden rounded-control border border-neutral-60 bg-black outline-none ${
               model.phase === 'connected' || model.phase === 'connecting' ? '' : 'hidden'
-            } h-[min(62vh,620px)]`}
+            } ${model.expanded || model.fullscreen ? 'min-h-0 flex-1' : 'h-[min(62vh,620px)] shrink-0'} fullscreen:h-screen fullscreen:w-screen`}
           >
             <video
               ref={video}
               autoPlay
               muted
               playsInline
-              className="h-full w-full object-contain"
+              on:loadedMetadata={videoReady}
+              on:loadedData={videoReady}
+              on:resize={videoReady}
+              className="pointer-events-none absolute h-full max-h-none w-full max-w-none object-contain"
             />
             {model.phase !== 'connected' && (
               <div className="absolute inset-0 grid place-items-center bg-black/60 text-center">
@@ -810,10 +1050,14 @@ export default function RemoteDesktopDialog(props: {
         )}
 
         {model.phase === 'connected' && model.session?.role === 'controller' && (
-          <p className="m-0 text-[10.5px] leading-relaxed text-neutral-70">
+          <p className="desktop-session-details m-0 text-[10.5px] leading-relaxed text-neutral-70">
             {t('点击画面后可使用鼠标和键盘；离开窗口会释放所有按键。')}
+            {!props.browserMode && t(' Ctrl + Option + Command + Esc 可释放本机键盘。')}
             {model.width > 0 && model.height > 0
-              ? t(' 分辨率 {width}×{height}。', { width: model.width, height: model.height })
+              ? t(' 视频分辨率 {width}×{height} 像素。', {
+                  width: model.width,
+                  height: model.height,
+                })
               : ''}
           </p>
         )}
@@ -848,7 +1092,7 @@ export default function RemoteDesktopDialog(props: {
         )}
 
         {!props.browserMode && model.status && model.status.available && (
-          <div className="flex flex-wrap items-center gap-2 rounded-control border border-neutral-50 px-2.5 py-2 text-[10px] text-neutral-70">
+          <div className="desktop-session-details flex flex-wrap items-center gap-2 rounded-control border border-neutral-50 px-2.5 py-2 text-[10px] text-neutral-70">
             <span>
               {t('屏幕录制：{status}', {
                 status: model.status.screenRecording ? t('已授权') : t('未授权'),
@@ -860,7 +1104,16 @@ export default function RemoteDesktopDialog(props: {
               })}
             </span>
             <span>{t('显示器：{screens} 个', { screens: model.status.screens })}</span>
-            {(!model.status.screenRecording || !model.status.accessibility) && (
+            {model.mode === 'controller' && model.status.inputMonitoring !== undefined && (
+              <span>
+                {t('输入监控：{status}', {
+                  status: model.status.inputMonitoring ? t('已授权') : t('未授权'),
+                })}
+              </span>
+            )}
+            {(!model.status.screenRecording ||
+              !model.status.accessibility ||
+              (model.mode === 'controller' && model.status.inputMonitoring === false)) && (
               <Button
                 size="compact"
                 variant="secondary"

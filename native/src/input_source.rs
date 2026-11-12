@@ -32,6 +32,15 @@ impl<S: Clone + PartialEq> Default for Controller<S> {
     }
 }
 impl<S: Clone + PartialEq> Controller<S> {
+    /// End a DOM-focused capture without carrying its grace window into another app.
+    pub fn finish(&mut self, restore: bool, backend: &mut impl Backend<Source = S>) -> bool {
+        let result = !restore || self.restore(backend);
+        self.remote = false;
+        self.guard_until = None;
+        self.local = backend.current();
+        self.last_snapshot = Some(Instant::now());
+        result
+    }
     /// macOS may switch the server's input source before its HID notification is
     /// delivered. Keep the original source, including a short guard for delayed changes.
     pub fn capture(
@@ -201,5 +210,16 @@ mod tests {
         b.current = 0;
         controller.capture(false, false, now + Duration::from_secs(5), &mut b);
         assert_eq!(b.current, 0);
+    }
+    #[test]
+    fn losing_foreground_does_not_overwrite_the_new_apps_source() {
+        let mut controller = Controller::default();
+        let mut b = backend(1);
+        let now = Instant::now();
+        controller.capture(true, false, now, &mut b);
+        b.current = 0;
+        assert!(controller.finish(false, &mut b));
+        assert_eq!(b.current, 0);
+        assert!(b.selections.is_empty());
     }
 }

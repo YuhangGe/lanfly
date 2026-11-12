@@ -42,3 +42,8 @@ export const desktopIce = rootProxy.desktopIce as unknown as typeof ServerAction
 export const desktopStop = rootProxy.desktopStop as unknown as typeof ServerActions.desktopStop;
 export const desktopBitrate =
   rootProxy.desktopBitrate as unknown as typeof ServerActions.desktopBitrate;
+export const desktopKeyboard =
+  rootProxy.desktopKeyboard as unknown as typeof ServerActions.desktopKeyboard;
+
+export const desktopDisplay =
+  rootProxy.desktopDisplay as unknown as typeof ServerActions.desktopDisplay;

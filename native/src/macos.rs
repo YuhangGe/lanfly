@@ -1,6 +1,7 @@
 //! Quartz events stay on a native run-loop thread. No JS callback runs in an event tap.
 //! A native watchdog restores local input even when Node stops polling or stalls.
 use crate::cursor::{CursorBackend, CursorCapture};
+use crate::focused_keyboard::FocusedKeyboard;
 use crate::keyboard::{FLAGS_MASK, InputSourceKey, held_key, valid_key};
 use crate::macos_input_source;
 use serde::Deserialize;
@@ -212,6 +213,7 @@ struct State {
     physical_keys: BTreeSet<u16>,
     input_source_key: InputSourceKey,
     raw_caps: bool,
+    desktop_keyboard: FocusedKeyboard,
     physical_buttons: BTreeSet<u32>,
     queue: Vec<Value>,
     tick: Instant,
@@ -233,6 +235,7 @@ impl Default for State {
             physical_keys: BTreeSet::new(),
             input_source_key: InputSourceKey::default(),
             raw_caps: false,
+            desktop_keyboard: FocusedKeyboard::default(),
             physical_buttons: BTreeSet::new(),
             queue: Vec::new(),
             tick: Instant::now(),
@@ -282,6 +285,9 @@ fn permissions_status() -> (bool, bool) {
         unsafe { AXIsProcessTrusted() || CGPreflightPostEventAccess() } || probe_keyboard_access(0);
     let monitoring = unsafe { CGPreflightListenEventAccess() } || probe_keyboard_access(1);
     (accessibility, monitoring)
+}
+pub(crate) fn input_monitoring() -> bool {
+    (unsafe { CGPreflightListenEventAccess() }) || probe_keyboard_access(1)
 }
 pub(crate) fn display_ids() -> Vec<u32> {
     let mut count = 0u32;
@@ -446,6 +452,7 @@ fn thread_main(ready: mpsc::SyncSender<Result<(), String>>, activate: mpsc::Rece
                 s.queue.clear();
                 s.queue.push(json!({"kind":"fault"}));
             }
+            s.desktop_keyboard.active(Instant::now(), frontmost_pid());
             // Quartz disables taps on timeout. Recover local input before re-enabling.
             if !s.enabled {
                 CGEventTapEnable(tap, true);
@@ -456,10 +463,102 @@ fn thread_main(ready: mpsc::SyncSender<Result<(), String>>, activate: mpsc::Rece
 
 extern "C" fn caps_pressed() {
     let mut s = state().lock().unwrap();
-    if s.enabled && s.server && s.remote && s.queue.len() < 1024 {
+    if s.desktop_keyboard.active(Instant::now(), frontmost_pid()) {
+        s.desktop_keyboard.source_press();
+        macos_input_source::trace("physical caps press -> desktop input-source");
+    } else if s.enabled && s.server && s.remote && s.queue.len() < 1024 {
         s.queue.push(json!({"kind":"input-source"}));
         macos_input_source::trace("physical caps press -> input-source");
     }
+}
+
+fn initialize_thread() -> Result<(), String> {
+    THREAD.initialize(|| {
+        let (tx, rx) = mpsc::sync_channel(1);
+        let (activate, activation) = mpsc::channel();
+        std::thread::spawn(move || thread_main(tx, activation));
+        rx.recv_timeout(Duration::from_secs(2))
+            .unwrap_or(Err("INPUT_NATIVE_ERROR".into()))?;
+        activate
+            .send(())
+            .map_err(|_| "INPUT_NATIVE_ERROR".to_string())
+    })
+}
+
+#[repr(C)]
+struct ProcessSerialNumber {
+    high: u32,
+    low: u32,
+}
+#[link(name = "Carbon", kind = "framework")]
+unsafe extern "C" {
+    fn GetFrontProcess(process: *mut ProcessSerialNumber) -> i32;
+    fn GetProcessPID(process: *const ProcessSerialNumber, pid: *mut i32) -> i32;
+}
+fn frontmost_pid() -> i32 {
+    let mut process = ProcessSerialNumber { high: 0, low: 0 };
+    let mut pid = 0;
+    if unsafe { GetFrontProcess(&mut process) } == 0 {
+        unsafe { GetProcessPID(&process, &mut pid) };
+    }
+    pid
+}
+
+pub fn desktop_keyboard_start() -> Result<(), String> {
+    if state().lock().unwrap().enabled {
+        return Err("DESKTOP_BUSY".into());
+    }
+    let (accessibility, monitoring) = permissions_status();
+    if !accessibility || !monitoring {
+        return Err("INPUT_PERMISSION".into());
+    }
+    initialize_thread()?;
+    if !macos_input_source::capture(false, false) {
+        return Err("INPUT_SOURCE_FAILED".into());
+    }
+    let pid = frontmost_pid();
+    if pid == 0 {
+        return Err("INPUT_NOT_READY".into());
+    }
+    let held = (0..128)
+        .filter(|key| unsafe { CGEventSourceKeyState(1, *key) })
+        .collect();
+    state()
+        .lock()
+        .unwrap()
+        .desktop_keyboard
+        .start(Instant::now(), pid, held);
+    macos_input_source::trace(&format!("desktop keyboard focus pid={pid}"));
+    Ok(())
+}
+pub fn desktop_keyboard_poll() -> Value {
+    let pid = frontmost_pid();
+    let mut s = state().lock().unwrap();
+    let restore = pid == s.desktop_keyboard.owner_pid();
+    let active = s.desktop_keyboard.renew(Instant::now(), pid);
+    let mut events = s.desktop_keyboard.take();
+    drop(s);
+    let switching = events.iter().any(|event| event["t"] == "source");
+    let result = if active {
+        macos_input_source::capture(true, switching)
+    } else {
+        macos_input_source::finish(restore)
+    };
+    if !result {
+        desktop_keyboard_stop();
+        events.clear();
+        events.push(json!({"t":"release"}));
+        return json!({"active":false,"events":events});
+    }
+    json!({"active":active,"events":events})
+}
+pub fn desktop_keyboard_stop() {
+    let pid = frontmost_pid();
+    let mut s = state().lock().unwrap();
+    let restore = s.desktop_keyboard.owner_pid() == pid;
+    s.desktop_keyboard.stop();
+    drop(s);
+    macos_input_source::finish(restore);
 }
 
 pub fn start(role: &str, edge: &str) -> Result<(), String> {
@@ -477,21 +576,13 @@ pub fn start(role: &str, edge: &str) -> Result<(), String> {
     if role == "server" && !BackgroundCursor::enable() {
         return Err("INPUT_CURSOR_CAPTURE".into());
     }
-    THREAD.initialize(|| {
-        let (tx, rx) = mpsc::sync_channel(1);
-        let (activate, activation) = mpsc::channel();
-        std::thread::spawn(move || thread_main(tx, activation));
-        rx.recv_timeout(Duration::from_secs(2))
-            .unwrap_or(Err("INPUT_NATIVE_ERROR".into()))?;
-        activate
-            .send(())
-            .map_err(|_| "INPUT_NATIVE_ERROR".to_string())
-    })?;
+    initialize_thread()?;
     if role == "server" && !macos_input_source::capture(false, false) {
         return Err("INPUT_SOURCE_FAILED".into());
     }
     let mut s = state().lock().unwrap();
     release(&mut s);
+    s.desktop_keyboard.stop();
     s.server = role == "server";
     s.edge = edge.into();
     s.bounds = unsafe { CGDisplayBounds(CGMainDisplayID()) };
@@ -538,6 +629,7 @@ extern "C" fn callback(_proxy: Ref, kind: u32, event: Ref, _user: Ref) -> Ref {
     let mut s = state().lock().unwrap();
     if kind >= 0xffff_fffe {
         release(&mut s);
+        s.desktop_keyboard.stop();
         s.enabled = false;
         s.queue.clear();
         s.queue.push(json!({"kind":"fault"}));
@@ -546,7 +638,24 @@ extern "C" fn callback(_proxy: Ref, kind: u32, event: Ref, _user: Ref) -> Ref {
     if event.is_null() {
         return event;
     }
-    if !s.enabled || unsafe { CGEventGetIntegerValueField(event, 42) } == TAG {
+    if unsafe { CGEventGetIntegerValueField(event, 42) } == TAG {
+        return event;
+    }
+    if matches!(kind, 10..=12) && s.desktop_keyboard.active(Instant::now(), frontmost_pid()) {
+        let flags = unsafe { CGEventGetFlags(event) };
+        let key = unsafe { CGEventGetIntegerValueField(event, 9) } as u16;
+        if kind == 10 && key == 53 && flags & EMERGENCY == EMERGENCY {
+            s.desktop_keyboard.stop();
+            return null_mut();
+        }
+        let raw_caps = s.raw_caps;
+        return if s.desktop_keyboard.key(kind, key, flags, raw_caps) {
+            null_mut()
+        } else {
+            event
+        };
+    }
+    if !s.enabled {
         return event;
     }
     let flags = unsafe { CGEventGetFlags(event) };
@@ -611,6 +720,7 @@ extern "C" fn callback(_proxy: Ref, kind: u32, event: Ref, _user: Ref) -> Ref {
     }
     if s.queue.len() >= 1024 {
         release(&mut s);
+        s.desktop_keyboard.stop();
         s.enabled = false;
         s.queue.clear();
         s.queue.push(json!({"kind":"fault"}));

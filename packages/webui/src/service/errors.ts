@@ -28,6 +28,8 @@ export function registerErrors() {
     DESKTOP_PEER_MISMATCH: t('远程桌面请求的设备与当前会话不匹配'),
     DESKTOP_SDP_INVALID: t('SDP 协商失败，请重试'),
     DESKTOP_CAPTURE_FAILED: t('无法采集屏幕，请检查屏幕录制权限和显示器状态'),
+    DESKTOP_RESOLUTION_UNSUPPORTED: t('受控端不支持所选分辨率，请刷新选项后重试'),
+    DESKTOP_RESOLUTION_FAILED: t('切换远端分辨率失败，已尝试恢复原设置'),
     DESKTOP_DISPLAY_CHANGED: t('显示器布局发生变化，远程桌面已停止，请重新连接'),
     DESKTOP_INPUT_PERMISSION: t('远程控制需要辅助功能权限，请在系统设置中授权'),
     DESKTOP_CONNECTION_LOST: t('远程桌面连接已断开'),

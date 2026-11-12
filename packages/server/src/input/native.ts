@@ -27,6 +27,10 @@ export interface NativeInput {
   desktopBitrate?(sessionId: string, bitrate: number): void;
   desktopKeyframe?(sessionId: string): void;
   desktopInput?(event: string): void;
+  desktopDisplayModes?(): string;
+  desktopKeyboardStart?(): void;
+  desktopKeyboardPoll?(): string;
+  desktopKeyboardStop?(): void;
 }
 
 export interface NativeDesktop {
@@ -41,6 +45,10 @@ export interface NativeDesktop {
   desktopBitrate(sessionId: string, bitrate: number): void;
   desktopKeyframe(sessionId: string): void;
   desktopInput(event: string): void;
+  desktopDisplayModes?(): string;
+  desktopKeyboardStart?(): void;
+  desktopKeyboardPoll?(): string;
+  desktopKeyboardStop?(): void;
 }
 
 let binding: NativeInput | undefined;

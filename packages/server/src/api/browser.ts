@@ -6,6 +6,7 @@ import {
   desktopOfferInput,
   desktopRejectInput,
   desktopRequestInput,
+  desktopDisplayInput,
   retryMessageInput,
   sendFileInput,
   sendMessageInput,
@@ -98,6 +99,9 @@ export async function handleBrowserRequest(
           id,
           z.object({ name: z.string().trim().min(1).max(64) }).parse(input).name,
         );
+        break;
+      case 'desktopDisplay':
+        result = await app.desktop.displayModes(desktopDisplayInput.parse(input).peerId);
         break;
       case 'desktopRequest':
         result = await app.desktop.request(id, desktopRequestInput.parse(input));

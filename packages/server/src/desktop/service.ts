@@ -1,5 +1,12 @@
 import {
   DESKTOP_ACCEPT_TTL_MS,
+  desktopDisplayModesSchema,
+  desktopResolutionPreferenceSchema,
+  type DesktopResolutionChoice,
+  type DesktopResolutionPreference,
+  desktopPeerDisplaySchema,
+  type DesktopDisplayModes,
+  type DesktopResolution,
   DESKTOP_DEFAULT_BITRATE,
   DESKTOP_EVENT,
   DESKTOP_FPS,
@@ -15,6 +22,8 @@ import {
   type DesktopRequestInput,
   type DesktopSessionView,
   type DesktopStatus,
+  type DesktopKeyboardInput,
+  type DesktopKeyboardResult,
   desktopPeerAcceptSchema,
   desktopPeerErrorSchema,
   desktopPeerIceSchema,
@@ -33,6 +42,7 @@ import { ErrorCodes, throwActionError } from '../core/errors';
 import { randomToken, safeTokenEquals } from '../core/security';
 import { loadDesktopNative, type NativeDesktop } from '../input/native';
 import { logger } from '../logger';
+import { DesktopKeyboardCapture } from './keyboard';
 
 type Role = 'controller' | 'controlled';
 
@@ -54,6 +64,7 @@ interface Session {
   createdAt: number;
   expiresAt: number;
   nativeStarted: boolean;
+  resolution?: DesktopResolution;
   error?: string;
 }
 
@@ -78,8 +89,12 @@ export class DesktopService {
   #cleanup?: NodeJS.Timeout;
   #polling = false;
   #stopped = false;
+  #keyboard = new DesktopKeyboardCapture(() => this.#binding());
 
-  constructor(private readonly app: Application) {}
+  constructor(
+    private readonly app: Application,
+    private readonly nativeProvider: () => NativeDesktop | undefined = loadDesktopNative,
+  ) {}
 
   start(): void {
     this.#cleanup = setInterval(() => this.#expire(), 5_000);
@@ -87,6 +102,7 @@ export class DesktopService {
   }
 
   async stop(): Promise<void> {
+    this.#keyboard.stop();
     this.#stopped = true;
     clearInterval(this.#cleanup);
     clearInterval(this.#poll);
@@ -136,6 +152,22 @@ export class DesktopService {
     return Boolean(this.#activeSession());
   }
 
+  keyboard(owner: string, input: DesktopKeyboardInput): DesktopKeyboardResult {
+    const session = this.#requireSession(input.sessionId, 'controller');
+    this.#assertOwner(session, owner);
+    if (owner !== this.app.identity.id) throwActionError(ErrorCodes.DESKTOP_UNAUTHORIZED);
+    if (!isActive(session.phase) || !session.control) throwActionError(ErrorCodes.DESKTOP_STATE);
+    if (input.active && !['connecting', 'connected'].includes(session.phase)) {
+      this.#keyboard.stop(session.id);
+      return { supported: true, active: false, events: [{ t: 'release' }] };
+    }
+    try {
+      return this.#keyboard.poll(input);
+    } catch (error) {
+      throwActionError(error instanceof Error ? error.message : 'INPUT_NATIVE_ERROR');
+    }
+  }
+
   /** The quality choice is remembered per target display name, not by ephemeral peer ID. */
   bitrates(): Record<string, number> {
     const stored = this.app.state.get(BITRATES_KEY);
@@ -165,6 +197,59 @@ export class DesktopService {
     void this.app.state.set(BITRATES_KEY, bitrates).catch((error) => {
       logger.debug(`保存远程桌面清晰度失败：${String(error)}`);
     });
+  }
+
+  #controllerName(owner: string): string {
+    return (
+      (owner === this.app.identity.id
+        ? this.app.identity.name
+        : this.app.network.browsers.get(owner)?.info.name) ??
+      this.app.identity.info.name ??
+      owner
+    );
+  }
+
+  #resolutionPreferences(): DesktopResolutionPreference[] {
+    const stored = this.app.state.get('desktopResolutions');
+    if (!Array.isArray(stored)) return [];
+    return stored.flatMap((value) => {
+      const result = desktopResolutionPreferenceSchema.safeParse(value);
+      return result.success ? [result.data] : [];
+    });
+  }
+
+  #resolutions(owner: string): Record<string, DesktopResolutionChoice> {
+    const controller = this.#controllerName(owner);
+    return Object.fromEntries(
+      this.#resolutionPreferences()
+        .filter((value) => value.controller === controller)
+        .map((value) => [value.controlled, value.choice]),
+    );
+  }
+
+  async #rememberResolution(
+    owner: string,
+    controlled: string,
+    choice: DesktopResolutionChoice,
+  ): Promise<void> {
+    const controller = this.#controllerName(owner);
+    const values = this.#resolutionPreferences().filter(
+      (value) => value.controller !== controller || value.controlled !== controlled,
+    );
+    values.push({ controller, controlled, choice });
+    try {
+      await this.app.state.set('desktopResolutions', values);
+    } catch (error) {
+      logger.debug(`保存远程桌面分辨率失败：${String(error)}`);
+    }
+  }
+
+  async displayModes(peerId: string): Promise<DesktopDisplayModes> {
+    const peer = this.app.network.peers().find((value) => value.id === peerId);
+    if (!peer || !peer.online) throwActionError(ErrorCodes.PEER_NOT_FOUND);
+    if (peer.kind === 'browser' || peer.id === this.app.identity.id)
+      throwActionError(ErrorCodes.DESKTOP_UNSUPPORTED);
+    return this.app.remote.desktopDisplay(peer);
   }
 
   async request(owner: string, input: DesktopRequestInput): Promise<DesktopSessionView> {
@@ -203,6 +288,7 @@ export class DesktopService {
         control: true,
         viewer,
         bitrate: session.bitrate,
+        resolution: input.resolution,
       });
       if (accepted.from.id !== session.peerId) {
         throwActionError(ErrorCodes.DESKTOP_PEER_MISMATCH);
@@ -229,6 +315,11 @@ export class DesktopService {
           .catch(() => undefined);
       }
       await this.#disableInput();
+      await this.#rememberResolution(
+        owner,
+        target.name,
+        input.resolutionChoice ?? input.resolution ?? 'keep',
+      );
       this.#emit(session.owner, { type: 'accepted', session: this.#view(session) });
     } catch (error) {
       this.#sessions.delete(session.id);
@@ -352,13 +443,19 @@ export class DesktopService {
     const session = this.#sessions.get(sessionId);
     if (!session) return;
     if (owner && session.owner !== owner) throwActionError(ErrorCodes.DESKTOP_NOT_FOUND);
+    this.#keyboard.stop(session.id);
     await this.#notifyStop(session, reason);
     this.#finish(session, 'stopped', reason, true);
   }
 
-  state(owner: string): { sessions: DesktopSessionView[]; bitrates: Record<string, number> } {
+  state(owner: string): {
+    sessions: DesktopSessionView[];
+    bitrates: Record<string, number>;
+    resolutions: Record<string, DesktopResolutionChoice>;
+  } {
     return {
       bitrates: this.bitrates(),
+      resolutions: this.#resolutions(owner),
       sessions: [...this.#sessions.values()]
         .filter(
           (session) =>
@@ -379,6 +476,14 @@ export class DesktopService {
     token: string | undefined,
   ): Promise<unknown> {
     switch (action) {
+      case 'display': {
+        const value = desktopPeerDisplaySchema.parse(payload);
+        await this.#verifyPeer(value.from, sourceHost, sourceId, true);
+        const native = this.#requireNative();
+        return native.desktopDisplayModes
+          ? desktopDisplayModesSchema.parse(JSON.parse(native.desktopDisplayModes()))
+          : { supported: false, modes: [] };
+      }
       case 'request':
         return this.#peerRequest(payload, sourceHost, sourceId);
       case 'accept':
@@ -401,7 +506,7 @@ export class DesktopService {
   }
 
   #binding(): NativeDesktop | undefined {
-    if (this.#native === undefined) this.#native = loadDesktopNative() ?? null;
+    if (this.#native === undefined) this.#native = this.nativeProvider() ?? null;
     return this.#native ?? undefined;
   }
 
@@ -492,6 +597,7 @@ export class DesktopService {
     notify: boolean,
   ): void {
     if (!this.#sessions.has(session.id)) return;
+    this.#keyboard.finish(session.id);
     this.#sessions.delete(session.id);
     session.phase = phase;
     if (session.role === 'controlled' && session.nativeStarted) {
@@ -648,6 +754,19 @@ export class DesktopService {
     await this.#verifyPeer(value.from, sourceHost, sourceId, true);
     if (this.#activeSession()) throwActionError(ErrorCodes.DESKTOP_BUSY);
     const status = this.status();
+    if (value.resolution) {
+      const native = this.#requireNative();
+      const info = native.desktopDisplayModes
+        ? desktopDisplayModesSchema.parse(JSON.parse(native.desktopDisplayModes()))
+        : undefined;
+      if (
+        !info?.modes.some(
+          (mode) =>
+            mode.width === value.resolution!.width && mode.height === value.resolution!.height,
+        )
+      )
+        throwActionError('DESKTOP_RESOLUTION_UNSUPPORTED');
+    }
     const now = Date.now();
     const session: Session = {
       id: value.sessionId,
@@ -664,6 +783,7 @@ export class DesktopService {
       width: status.display?.width ?? 0,
       height: status.display?.height ?? 0,
       bitrate: value.bitrate ?? DESKTOP_DEFAULT_BITRATE,
+      resolution: value.resolution,
       createdAt: now,
       expiresAt: now + DESKTOP_ACCEPT_TTL_MS,
       nativeStarted: false,
@@ -736,6 +856,7 @@ export class DesktopService {
               maxHeight: DESKTOP_MAX_HEIGHT,
               fps: DESKTOP_FPS,
               bitrate: session.bitrate,
+              resolution: session.resolution,
               // Bind the wildcard so ICE can advertise every LAN interface, not just the
               // discovery-selected primary IPv4 address.
               localAddress: '0.0.0.0',
@@ -827,6 +948,7 @@ export class DesktopService {
     const session = this.#requireSession(value.sessionId, 'controller');
     await this.#verifySessionPeer(session, value.from, sourceHost, sourceId);
     this.#verifyToken(session, token);
+    if (value.phase !== 'connected') this.#keyboard.stop(session.id);
     if (value.phase === 'failed') {
       session.phase = 'failed';
       session.error = value.error;

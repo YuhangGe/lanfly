@@ -41,6 +41,7 @@ export default function Button(props: Props) {
       aria-expanded={props['aria-expanded']}
       aria-controls={props['aria-controls']}
       aria-checked={props['aria-checked']}
+      aria-pressed={props['aria-pressed']}
       aria-haspopup={props['aria-haspopup']}
       aria-current={props['aria-current']}
       on:click={props['on:click']}

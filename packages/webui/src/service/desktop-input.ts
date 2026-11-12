@@ -1,4 +1,5 @@
 import { CapsLockPress } from './caps-lock';
+import { NativeDesktopKeyboard, type KeyboardRequest } from './desktop-keyboard';
 
 /** macOS virtual key codes for KeyboardEvent.code. */
 const MAC_KEY_CODES: Record<string, number> = {
@@ -149,12 +150,28 @@ export class DesktopControl {
   #attached = false;
   #capsPress = new CapsLockPress();
   #keyboardLocked = false;
+  #native?: NativeDesktopKeyboard;
 
   constructor(
     private readonly stage: HTMLElement,
     private readonly video: HTMLVideoElement,
     private readonly send: (payload: unknown) => void,
-  ) {}
+    keyboard?: KeyboardRequest,
+    keyboardError: (error: unknown) => void = () => undefined,
+  ) {
+    if (keyboard)
+      this.#native = new NativeDesktopKeyboard(
+        keyboard,
+        (events) => {
+          for (const event of events) this.#send(event);
+        },
+        () => {
+          this.stage.blur();
+          this.release();
+        },
+        keyboardError,
+      );
+  }
 
   attach(): void {
     if (this.#attached) return;
@@ -178,14 +195,19 @@ export class DesktopControl {
       capture: true,
     });
     this.#listen(this.stage, 'blur', () => this.release());
+    this.#listen(this.stage, 'focus', () => this.#focusKeyboard());
+    this.#listen(window, 'focus', () => this.#focusKeyboard());
+    this.#listen(window, 'lanfly-service-disconnected', () => this.release());
     const visibility = () => {
       if (document.visibilityState === 'hidden') this.release();
+      else this.#focusKeyboard();
     };
     const windowBlur = () => this.release();
     document.addEventListener('visibilitychange', visibility);
     window.addEventListener('blur', windowBlur);
     this.#cleanup.push(() => document.removeEventListener('visibilitychange', visibility));
     this.#cleanup.push(() => window.removeEventListener('blur', windowBlur));
+    this.#focusKeyboard();
   }
 
   detach(): void {
@@ -199,6 +221,7 @@ export class DesktopControl {
   }
 
   release(): void {
+    this.#native?.blur();
     this.#buttons.clear();
     this.#capsPress.reset();
     this.#send({ t: 'release' });
@@ -206,6 +229,7 @@ export class DesktopControl {
   }
 
   async lockKeyboard(): Promise<void> {
+    if (this.#native?.ownsKeyboard) return;
     const keyboard = (
       navigator as Navigator & {
         keyboard?: { lock?: () => Promise<void>; unlock?: () => void };
@@ -236,6 +260,7 @@ export class DesktopControl {
     if (event.code !== 'CapsLock' || !this.stage.contains(document.activeElement)) return;
     event.preventDefault();
     event.stopImmediatePropagation();
+    if (this.#native?.ownsKeyboard) return;
     if (this.#capsPress.update(down, event.getModifierState('CapsLock'), event.repeat)) {
       this.switchInputSource();
     }
@@ -243,6 +268,17 @@ export class DesktopControl {
 
   switchInputSource(): void {
     if (this.#attached) this.#send({ t: 'source' });
+  }
+
+  #focusKeyboard(): void {
+    if (
+      this.#attached &&
+      this.stage.contains(document.activeElement) &&
+      document.hasFocus() &&
+      document.visibilityState !== 'hidden'
+    ) {
+      this.#native?.focus();
+    }
   }
 
   #listen(
@@ -281,8 +317,9 @@ export class DesktopControl {
 
   #pointerDown(event: PointerEvent): void {
     if (event.button > 2) return;
-    void this.lockKeyboard();
     this.stage.focus({ preventScroll: true });
+    this.#focusKeyboard();
+    void this.lockKeyboard();
     try {
       this.stage.setPointerCapture(event.pointerId);
     } catch {
@@ -354,6 +391,11 @@ export class DesktopControl {
   }
 
   #key(event: KeyboardEvent, down: boolean): void {
+    if (this.#native?.ownsKeyboard) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     if (event.code === 'CapsLock') {
       this.#caps(event, down);
       return;

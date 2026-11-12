@@ -63,6 +63,7 @@ export interface DesktopStatus {
   available: boolean;
   screenRecording: boolean;
   accessibility: boolean;
+  inputMonitoring?: boolean;
   screens: number;
   display?: DesktopDisplayView;
   session?: { id: string; width: number; height: number };
@@ -73,6 +74,23 @@ export interface DesktopOfferResult {
   width: number;
   height: number;
 }
+
+export type DesktopKeyboardEvent =
+  | { t: 'key'; key: number; down: boolean; flags: number }
+  | { t: 'source' }
+  | { t: 'release' };
+export interface DesktopKeyboardResult {
+  supported: boolean;
+  active: boolean;
+  events: DesktopKeyboardEvent[];
+}
+export const desktopKeyboardInput = z.object({
+  sessionId: z.string().min(1).max(64),
+  clientId: z.string().uuid(),
+  revision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+  active: z.boolean(),
+});
+export type DesktopKeyboardInput = z.infer<typeof desktopKeyboardInput>;
 
 export type DesktopEvent =
   | { type: 'request'; session: DesktopSessionView }
@@ -87,7 +105,64 @@ export type DesktopEvent =
     }
   | { type: 'ended'; sessionId: string; reason?: string };
 
+export const desktopResolutionSchema = z.object({
+  width: z.number().int().min(640).max(7680),
+  height: z.number().int().min(480).max(4320),
+});
+export type DesktopResolution = z.infer<typeof desktopResolutionSchema>;
+export const desktopResolutionChoiceSchema = z.union([
+  z.literal('keep'),
+  z.literal('fit'),
+  desktopResolutionSchema,
+]);
+export type DesktopResolutionChoice = z.infer<typeof desktopResolutionChoiceSchema>;
+export const desktopResolutionPreferenceSchema = z.object({
+  controller: z.string().min(1).max(256),
+  controlled: z.string().min(1).max(256),
+  choice: desktopResolutionChoiceSchema,
+});
+export type DesktopResolutionPreference = z.infer<typeof desktopResolutionPreferenceSchema>;
+export const desktopDisplayModeSchema = desktopResolutionSchema.extend({
+  pixelWidth: z.number().int().min(1).max(32768).optional(),
+  pixelHeight: z.number().int().min(1).max(32768).optional(),
+});
+export const desktopDisplayModesSchema = z.object({
+  supported: z.boolean(),
+  current: desktopDisplayModeSchema.optional(),
+  modes: z.array(desktopDisplayModeSchema).max(256),
+});
+export type DesktopDisplayModes = z.infer<typeof desktopDisplayModesSchema>;
+export const desktopDisplayInput = z.object({ peerId: z.string().min(1).max(64) });
+export const desktopPeerDisplaySchema = z.object({ from: peerInfoSchema });
+
+/** Match controller screen pixels against each remote mode's backing pixels. */
+export function fitDesktopResolution(
+  info: DesktopDisplayModes,
+  width: number,
+  height: number,
+): DesktopResolution | undefined {
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return;
+  const aspect = info.current ? info.current.width / info.current.height : width / height;
+  const modes = info.modes.filter(
+    (mode) => Math.abs(Math.log(mode.width / mode.height / aspect)) < 0.05,
+  );
+  const candidates = modes.length ? modes : info.modes;
+  const pixelWidth = (mode: DesktopDisplayModes['modes'][number]) => mode.pixelWidth ?? mode.width;
+  const pixelHeight = (mode: DesktopDisplayModes['modes'][number]) =>
+    mode.pixelHeight ?? mode.height;
+  const area = (mode: DesktopDisplayModes['modes'][number]) => pixelWidth(mode) * pixelHeight(mode);
+  const fits = candidates.filter(
+    (mode) => pixelWidth(mode) <= width && pixelHeight(mode) <= height,
+  );
+  const mode = [...(fits.length ? fits : candidates)].sort((a, b) =>
+    fits.length ? area(b) - area(a) : area(a) - area(b),
+  )[0];
+  return mode ? { width: mode.width, height: mode.height } : undefined;
+}
+
 export const desktopRequestInput = z.object({
+  resolutionChoice: desktopResolutionChoiceSchema.optional(),
+  resolution: desktopResolutionSchema.optional(),
   peerId: z.string().min(1).max(64),
   bitrate: z.number().int().min(DESKTOP_MIN_BITRATE).max(DESKTOP_MAX_BITRATE).optional(),
 });
@@ -128,6 +203,7 @@ export type DesktopAcceptInput = z.output<typeof desktopAcceptInput>;
 
 /** Peer-to-peer signaling payloads. Room headers bind the sender; the token binds the session. */
 export const desktopPeerRequestSchema = z.object({
+  resolution: desktopResolutionSchema.optional(),
   sessionId: z.string().min(1).max(64),
   from: peerInfoSchema,
   // Kept optional for wire compatibility. Remote control is always enabled for desktop

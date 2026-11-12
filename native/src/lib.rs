@@ -1,10 +1,16 @@
 use neon::prelude::*;
 
+#[cfg(target_os = "macos")]
+mod display_mode;
+
 #[cfg(any(target_os = "macos", test))]
 mod cursor;
 
 #[cfg(any(target_os = "macos", test))]
 mod keyboard;
+
+#[cfg(any(target_os = "macos", test))]
+mod focused_keyboard;
 
 #[cfg(any(target_os = "macos", test))]
 mod input_source;
@@ -101,6 +107,13 @@ fn desktop_status(mut cx: FunctionContext) -> JsResult<JsString> {
     ))
 }
 
+fn desktop_display_modes(mut cx: FunctionContext) -> JsResult<JsString> {
+    #[cfg(target_os = "macos")]
+    return Ok(cx.string(display_mode::info().to_string()));
+    #[cfg(not(target_os = "macos"))]
+    Ok(cx.string(r#"{"supported":false,"modes":[]}"#))
+}
+
 fn desktop_permissions(mut cx: FunctionContext) -> JsResult<JsUndefined> {
     #[cfg(target_os = "macos")]
     desktop::request_permissions();
@@ -179,6 +192,28 @@ fn desktop_poll(mut cx: FunctionContext) -> JsResult<JsString> {
     Ok(cx.string("[]"))
 }
 
+fn desktop_keyboard_start(mut cx: FunctionContext) -> JsResult<JsUndefined> {
+    #[cfg(target_os = "macos")]
+    if let Err(error) = macos::desktop_keyboard_start() {
+        return cx.throw_error(error);
+    }
+    #[cfg(not(target_os = "macos"))]
+    return cx.throw_error("INPUT_UNSUPPORTED");
+    #[allow(unreachable_code)]
+    Ok(cx.undefined())
+}
+fn desktop_keyboard_poll(mut cx: FunctionContext) -> JsResult<JsString> {
+    #[cfg(target_os = "macos")]
+    return Ok(cx.string(macos::desktop_keyboard_poll().to_string()));
+    #[cfg(not(target_os = "macos"))]
+    Ok(cx.string(r#"{"active":false,"events":[]}"#))
+}
+fn desktop_keyboard_stop(mut cx: FunctionContext) -> JsResult<JsUndefined> {
+    #[cfg(target_os = "macos")]
+    macos::desktop_keyboard_stop();
+    Ok(cx.undefined())
+}
+
 fn desktop_bitrate(mut cx: FunctionContext) -> JsResult<JsUndefined> {
     let session = cx.argument::<JsString>(0)?.value(&mut cx);
     let bitrate = cx.argument::<JsNumber>(1)?.value(&mut cx) as u32;
@@ -238,6 +273,7 @@ fn main(mut cx: ModuleContext) -> NeonResult<()> {
     cx.export_function("reset", reset)?;
     cx.export_function("stop", stop)?;
     cx.export_function("desktopStatus", desktop_status)?;
+    cx.export_function("desktopDisplayModes", desktop_display_modes)?;
     cx.export_function("desktopRequestPermissions", desktop_permissions)?;
     cx.export_function("desktopStart", desktop_start)?;
     cx.export_function("desktopOffer", desktop_offer)?;
@@ -248,5 +284,8 @@ fn main(mut cx: ModuleContext) -> NeonResult<()> {
     cx.export_function("desktopBitrate", desktop_bitrate)?;
     cx.export_function("desktopKeyframe", desktop_keyframe)?;
     cx.export_function("desktopInput", desktop_input)?;
+    cx.export_function("desktopKeyboardStart", desktop_keyboard_start)?;
+    cx.export_function("desktopKeyboardPoll", desktop_keyboard_poll)?;
+    cx.export_function("desktopKeyboardStop", desktop_keyboard_stop)?;
     Ok(())
 }

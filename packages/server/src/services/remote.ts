@@ -1,5 +1,8 @@
 import {
   DESKTOP_TOKEN_HEADER,
+  PEER_DESKTOP_DISPLAY_PATH,
+  desktopDisplayModesSchema,
+  type DesktopDisplayModes,
   PEER_DESKTOP_ACCEPT_PATH,
   PEER_DESKTOP_ERROR_PATH,
   PEER_DESKTOP_ICE_PATH,
@@ -75,6 +78,15 @@ export class RemoteClient {
 
   async sendMessage(target: PeerTarget, payload: Record<string, unknown>): Promise<void> {
     await this.#requestJson(target, 'POST', PEER_MESSAGES_PATH, payload);
+  }
+
+  async desktopDisplay(target: PeerTarget): Promise<DesktopDisplayModes> {
+    const value = await this.#requestJson(target, 'POST', PEER_DESKTOP_DISPLAY_PATH, {
+      from: this.identity.info,
+    });
+    const parsed = desktopDisplayModesSchema.safeParse(value);
+    if (!parsed.success) throwActionError(ErrorCodes.PEER_PROTOCOL);
+    return parsed.data;
   }
 
   async desktopRequest(target: PeerTarget, payload: unknown): Promise<DesktopRequestResponse> {

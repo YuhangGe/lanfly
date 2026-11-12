@@ -227,6 +227,7 @@ pub fn initialize(channel: Channel) {
 enum Action {
     Capture { remote: bool, switching: bool },
     Toggle,
+    Finish { restore: bool },
 }
 
 #[derive(Default)]
@@ -264,6 +265,10 @@ fn on_main(action: Action) -> bool {
                 sources.capture(next, switching, Instant::now(), backend)
             }
             Action::Toggle => sources.toggle(backend),
+            Action::Finish { restore } => {
+                *remote = false;
+                sources.finish(restore, backend)
+            }
         }
     })
 }
@@ -304,4 +309,7 @@ pub fn capture(remote: bool, switching: bool) -> bool {
 }
 pub fn toggle() -> bool {
     request(Action::Toggle)
+}
+pub fn finish(restore: bool) -> bool {
+    request(Action::Finish { restore })
 }

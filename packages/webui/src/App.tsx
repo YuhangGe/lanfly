@@ -236,6 +236,8 @@ export default function App() {
     if (!active || model.desktopOpen) return;
     model.desktopPeerId = active.peerId;
     model.desktopSessionId = active.sessionId;
+    model.desktopSharingId = active.sessionId;
+    model.desktopMinimized = false;
     model.desktopOpen = true;
     pushToast(t('{name} 正在查看并控制你的屏幕', { name: active.peerName }), 'info');
   }
@@ -363,6 +365,7 @@ export default function App() {
     };
     source.onerror = () => {
       model.connected = false;
+      window.dispatchEvent(new Event('lanfly-service-disconnected'));
       if (browserMode && !model.joinBusy) void startBrowser();
     };
     source.addEventListener('reload', () => {
@@ -411,10 +414,11 @@ export default function App() {
         model.desktopSessionId = '';
       }
       if (payload.type === 'accepted' && payload.session.role === 'controlled' && !browserMode) {
+        const sameSession = model.desktopSharingId === payload.session.sessionId;
         model.desktopPeerId = payload.session.peerId;
         model.desktopSessionId = payload.session.sessionId;
         model.inputOpen = false;
-        model.desktopMinimized = false;
+        if (!sameSession) model.desktopMinimized = false;
         model.desktopOpen = true;
         model.desktopSharingId = payload.session.sessionId;
         pushToast(t('{name} 已开始查看并控制你的屏幕', { name: payload.session.peerName }), 'info');
