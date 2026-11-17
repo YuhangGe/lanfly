@@ -253,16 +253,7 @@ pub fn handle(value: &str) -> Result<(), String> {
             let point = point_for(&bounds, input.x, input.y);
             move_to(point, 5);
             unsafe {
-                // Browser wheel deltaY is positive when scrolling down; Quartz uses the
-                // opposite sign for a positive wheel delta.
-                let event = CGEventCreateScrollWheelEvent2(
-                    std::ptr::null_mut(),
-                    0,
-                    2,
-                    input.dx.round() as i32,
-                    (-input.dy).round() as i32,
-                    0,
-                );
+                let event = scroll_event(input.dx, input.dy);
                 post(event);
             }
         }
@@ -296,9 +287,48 @@ pub fn handle(value: &str) -> Result<(), String> {
     Ok(())
 }
 
+// Quartz axis 1 is vertical and axis 2 is horizontal. Browser deltas
+// describe viewport movement, so both signs are reversed for Quartz.
+unsafe fn scroll_event(dx: f64, dy: f64) -> Ref {
+    unsafe {
+        CGEventCreateScrollWheelEvent2(
+            std::ptr::null_mut(),
+            0,
+            2,
+            (-dy).round() as i32,
+            (-dx).round() as i32,
+            0,
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    unsafe extern "C" {
+        fn CGEventGetIntegerValueField(event: Ref, field: u32) -> i64;
+    }
+
+    #[test]
+    fn browser_scroll_preserves_axes_and_direction() {
+        for (dx, dy) in [
+            (24.0, 0.0),
+            (-24.0, 0.0),
+            (0.0, 36.0),
+            (0.0, -36.0),
+            (24.0, -36.0),
+        ] {
+            unsafe {
+                let event = scroll_event(dx, dy);
+                assert!(!event.is_null());
+                // Pixel deltas for axis 1 (vertical) and axis 2 (horizontal).
+                assert_eq!(CGEventGetIntegerValueField(event, 96), -dy as i64);
+                assert_eq!(CGEventGetIntegerValueField(event, 97), -dx as i64);
+                CFRelease(event.cast());
+            }
+        }
+    }
 
     #[test]
     fn rejects_invalid_wire_events_without_posting() {
