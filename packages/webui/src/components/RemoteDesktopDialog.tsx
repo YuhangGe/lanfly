@@ -128,6 +128,7 @@ export default function RemoteDesktopDialog(props: {
   });
   const stage = ref<HTMLDivElement>();
   const video = ref<HTMLVideoElement>();
+  const toolbar = ref<HTMLDivElement>();
 
   let viewport: DesktopViewport | undefined;
   let displayRequest = 0;
@@ -206,6 +207,20 @@ export default function RemoteDesktopDialog(props: {
     model.zoom = zoom;
     model.pan = zoom === 'fit' ? false : pan;
     viewport?.setView(model.zoom, model.pan);
+  }
+
+  function panOnWheel(event: WheelEvent) {
+    if (model.pan || model.zoom === 'fit' || !viewport) return;
+    event.preventDefault();
+    event.stopPropagation();
+    // Scroll toward the content in the direction of the wheel, as in a scrollable viewport.
+    const stageElement = stage.value;
+    const lineSize = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16 : 1;
+    const page = event.deltaMode === WheelEvent.DOM_DELTA_PAGE;
+    viewport.moveBy(
+      -event.deltaX * (page ? (stageElement?.clientWidth ?? 1) : lineSize),
+      -event.deltaY * (page ? (stageElement?.clientHeight ?? 1) : lineSize),
+    );
   }
 
   function selectPreferredBitrate(peerId: string) {
@@ -769,20 +784,43 @@ export default function RemoteDesktopDialog(props: {
       <div
         className="desktop-session-view flex min-h-0 flex-1 flex-col gap-3 text-[12px] text-neutral-90"
         on:pointerMove={(event) => {
-          if (model.fullscreen)
-            model.fullscreenTools = event.clientY <= (model.fullscreenTools ? 120 : 80);
+          if (!model.fullscreen) return;
+          const revealWidth = model.fullscreenTools ? (toolbar.value?.offsetWidth ?? 0) + 28 : 36;
+          model.fullscreenTools = window.innerWidth - event.clientX <= revealWidth;
         }}
         on:pointerLeave={() => {
           model.fullscreenTools = false;
         }}
       >
-        <div className={`desktop-view-tools ${model.fullscreenTools ? 'desktop-tools-near' : ''}`}>
+        <div
+          className={`desktop-view-tools ${model.fullscreenTools || model.pan ? 'desktop-tools-open' : ''}`}
+        >
+          {model.fullscreen && (
+            <Button
+              size="bare"
+              className="desktop-tools-hint grid place-items-center text-[16px]"
+              title={t('远程桌面')}
+              aria-label={t('远程桌面')}
+              on:click={() => {
+                model.fullscreenTools = true;
+                void nextTick().then(() => toolbar.value?.querySelector('select')?.focus());
+              }}
+            >
+              <span className="icon-[codicon--chevron-left]" aria-hidden="true" />
+            </Button>
+          )}
           <div
+            ref={toolbar}
             className="desktop-view-toolbar flex flex-wrap items-center justify-between gap-3"
             role="toolbar"
             aria-label={t('远程桌面')}
+            aria-orientation={model.fullscreen ? 'vertical' : 'horizontal'}
             on:mouseLeave={() => {
-              if (model.fullscreen && document.activeElement instanceof HTMLButtonElement)
+              if (
+                model.fullscreen &&
+                document.activeElement instanceof HTMLButtonElement &&
+                toolbar.value?.contains(document.activeElement)
+              )
                 document.activeElement.blur();
             }}
             on:change={(event) => {
@@ -790,7 +828,7 @@ export default function RemoteDesktopDialog(props: {
                 event.target.blur();
             }}
           >
-            <div className="flex min-w-0 flex-1 items-center gap-2 text-[14px] text-neutral-110">
+            <div className="desktop-view-status flex min-w-0 flex-1 items-center gap-2 text-[14px] text-neutral-110">
               {model.session && (
                 <span
                   className={`size-1.5 shrink-0 rounded-full ${
@@ -814,7 +852,7 @@ export default function RemoteDesktopDialog(props: {
                   </span>
                 )}
             </div>
-            <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+            <div className="desktop-view-actions flex shrink-0 flex-wrap items-center justify-end gap-2">
               {model.session?.role === 'controller' && model.phase === 'connected' && (
                 <>
                   <label className="flex items-center gap-1.5">
@@ -839,10 +877,17 @@ export default function RemoteDesktopDialog(props: {
                     variant={model.pan ? 'primary' : 'ghost'}
                     className="grid size-8 place-items-center rounded-control text-[17px] leading-none"
                     disabled={model.zoom === 'fit'}
-                    title={t('拖动画面')}
+                    title={
+                      model.zoom === 'fit'
+                        ? t('放大后可平移画面')
+                        : model.pan
+                          ? t('点击退出拖动画面模式')
+                          : t('点击开启拖动画面，或在此横向、纵向滚动来平移')
+                    }
                     aria-label={t('拖动画面')}
                     aria-pressed={model.pan}
                     on:click={() => setView(model.zoom, !model.pan)}
+                    on:wheel={panOnWheel}
                   >
                     <span className="icon-[codicon--move]" aria-hidden="true" />
                   </Button>

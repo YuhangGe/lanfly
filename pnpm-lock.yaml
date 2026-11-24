@@ -198,10 +198,10 @@ importers:
         version: 7.0.2
     optionalDependencies:
       lanfly-input-darwin-arm64:
-        specifier: 0.3.3
+        specifier: 0.3.4
         version: link:platform/darwin-arm64
       lanfly-input-darwin-x64:
-        specifier: 0.3.3
+        specifier: 0.3.4
         version: link:platform/darwin-x64
 
   packages/common:

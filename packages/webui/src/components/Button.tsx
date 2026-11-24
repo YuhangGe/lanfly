@@ -46,6 +46,7 @@ export default function Button(props: Props) {
       aria-current={props['aria-current']}
       on:click={props['on:click']}
       on:keyDown={props['on:keyDown']}
+      on:wheel={props['on:wheel']}
     >
       {props.children}
     </button>

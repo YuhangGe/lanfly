@@ -279,6 +279,7 @@ window.fetch=async(url,opts)=>{if(typeof url==='string'&&url.startsWith('/__rpc/
   );
   if (!full.active || !full.toolbar || full.width < 1500)
     throw Error('Fullscreen layout failed: ' + JSON.stringify(full));
+  const rightEdge = (await evaluate('innerWidth')) - 2;
   const fullBounds = await evaluate(
     `(()=>{const r=document.querySelector('[aria-label="远程桌面画面"]').getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height,screenWidth:innerWidth,screenHeight:innerHeight,toolbar:getComputedStyle(document.querySelector('.desktop-view-toolbar')).visibility};})()`,
   );
@@ -297,25 +298,69 @@ window.fetch=async(url,opts)=>{if(typeof url==='string'&&url.startsWith('/__rpc/
     )) !== 'hidden'
   )
     throw Error('Fullscreen toolbar did not hide');
+  if (
+    !(await evaluate(
+      `getComputedStyle(document.querySelector('.desktop-tools-hint')).visibility === 'visible'`,
+    ))
+  )
+    throw Error('Collapsed fullscreen toolbar did not show its hint');
   await evaluate('window.sent=[]');
-  await run('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 800, y: 60 });
+  await run('Input.dispatchMouseEvent', { type: 'mouseMoved', x: rightEdge, y: 380 });
   await pause(200);
   if (
     (await evaluate(
       `getComputedStyle(document.querySelector('.desktop-view-toolbar')).visibility`,
     )) !== 'visible'
   )
-    throw Error('Approaching the top did not reveal toolbar');
+    throw Error('Approaching the right edge did not reveal toolbar');
   await evaluate('window.sent=[]');
   const toolbar = await evaluate(
     `(()=>{const r=document.querySelector('.desktop-view-toolbar').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()`,
   );
+  if (
+    toolbar.x < rightEdge - 150 ||
+    toolbar.y > 240 ||
+    !(await evaluate(
+      `getComputedStyle(document.querySelector('.desktop-view-actions')).flexDirection === 'column'`,
+    ))
+  )
+    throw Error('Fullscreen toolbar is not vertical in the upper-right corner');
   await run('Input.dispatchMouseEvent', { type: 'mouseMoved', x: toolbar.x, y: toolbar.y });
   await evaluate(
     `(()=>{const e=document.fullscreenElement.querySelector('select[aria-label="缩放"]');e.focus();e.value='1.5';e.dispatchEvent(new Event('change',{bubbles:true}));})()`,
   );
   if ((await evaluate('window.sent')).some((e) => e.t === 'button' || e.t === 'move'))
     throw Error('Fullscreen toolbar forwarded mouse events');
+  const panButton = 'button[aria-label="拖动画面"]';
+  const wheelPan = await evaluate(`(() => {
+    const button = document.querySelector('${panButton}');
+    const video = document.querySelector('video');
+    const before = video.getBoundingClientRect();
+    const event = new WheelEvent('wheel', { deltaX: 18, deltaY: 26, bubbles: true, cancelable: true });
+    button.dispatchEvent(event);
+    const after = video.getBoundingClientRect();
+    return { x: before.left - after.left, y: before.top - after.top, handled: event.defaultPrevented };
+  })()`);
+  if (
+    !wheelPan.handled ||
+    Math.abs(wheelPan.x - 18) > 1 ||
+    Math.abs(wheelPan.y - 26) > 1 ||
+    (await evaluate('window.sent')).some((e) => e.t === 'wheel')
+  )
+    throw Error(
+      'Wheel on the inactive pan button did not move the video locally: ' +
+        JSON.stringify(wheelPan),
+    );
+  await evaluate(`document.querySelector('${panButton}').click()`);
+  await run('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 800, y: 500 });
+  await pause(200);
+  if (
+    (await evaluate(
+      `getComputedStyle(document.querySelector('.desktop-view-toolbar')).visibility`,
+    )) !== 'visible'
+  )
+    throw Error('Toolbar did not stay open in pan mode');
+  await evaluate(`document.querySelector('${panButton}').click()`);
   await run('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 800, y: 500 });
   await pause(200);
   if (
@@ -324,7 +369,7 @@ window.fetch=async(url,opts)=>{if(typeof url==='string'&&url.startsWith('/__rpc/
     )) !== 'hidden'
   )
     throw Error('Toolbar stayed open after changing zoom and leaving');
-  await run('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 800, y: 60 });
+  await run('Input.dispatchMouseEvent', { type: 'mouseMoved', x: rightEdge, y: 380 });
   await pause(180);
   await evaluate(
     `document.fullscreenElement.querySelector('button[aria-label="退出全屏"]').click()`,

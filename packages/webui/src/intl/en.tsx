@@ -38,6 +38,7 @@ export default {
   '49r3dy': 'No display available for capture.',
   '4HPvHH': 'Screen Recording permission is required. Grant it in System Settings and try again.',
   '4T1sHw': 'Dismiss notification',
+  '4f3p6e': 'Click to enable drag-to-pan, or scroll here to pan in either direction',
   '4uKmSE': 'Connection to the local lanfly service was lost. Reconnecting…',
   '5GyjRZ': 'Permission denied',
   '5I5/rw': 'Unable to read local service status',
@@ -66,6 +67,7 @@ export default {
   A275S2:
     'Choose a Mac on your LAN. After you start, the other side accepts automatically and enables keyboard and mouse control. Video is sent directly over WebRTC, not through Node.js. The controlled Mac must first grant Screen Recording and Accessibility permissions.',
   A8oUw0: 'Unable to create the download folder.',
+  AG7aWI: 'Zoom in to pan the desktop',
   AMABU6: 'LanFly - LAN chat, file transfer, keyboard/mouse sharing and remote desktop',
   AUMcPK: 'Zoom',
   AZ5efx: 'Room IDs do not match; unable to connect.',
@@ -164,6 +166,7 @@ export default {
   Sw36Bj: '← Left',
   SxOT7x: 'Waiting for a host to discover this device',
   SxUCF3: 'Connecting…',
+  T6Slfa: 'Click to exit drag-to-pan mode',
   T89W3a: 'Download file',
   'TE/1iR': 'The transfer was canceled.',
   TgT2E9: 'Remote display size',

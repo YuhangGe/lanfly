@@ -66,11 +66,9 @@ export class DesktopViewport {
       if (!this.#drag || this.#drag.id !== event.pointerId) return;
       event.preventDefault();
       event.stopImmediatePropagation();
-      this.#x += event.clientX - this.#drag.x;
-      this.#y += event.clientY - this.#drag.y;
+      this.moveBy(event.clientX - this.#drag.x, event.clientY - this.#drag.y);
       this.#drag.x = event.clientX;
       this.#drag.y = event.clientY;
-      this.refresh();
     });
     const end = (event: PointerEvent) => {
       if (!this.#drag || this.#drag.id !== event.pointerId) return;
@@ -98,6 +96,12 @@ export class DesktopViewport {
     this.#pan = pan;
     this.#drag = undefined;
     this.stage.style.cursor = pan ? 'grab' : '';
+    this.refresh();
+  }
+
+  moveBy(dx: number, dy: number): void {
+    this.#x += dx;
+    this.#y += dy;
     this.refresh();
   }
 

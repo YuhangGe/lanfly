@@ -296,3 +296,6 @@ yXTuwR,src/service/errors.ts,远程桌面已停止,远程桌面已停止,遠端�
 yaSxuq,src/service/errors.ts,原生桌面组件未安装，请重新安装包含桌面模块的 lanfly,原生桌面组件未安装，请重新安装包含桌面模块的 lanfly,原生桌面元件未安裝，請重新安裝包含桌面模組的 lanfly,The native desktop component is not installed. Reinstall lanfly with the desktop module.
 yuJnLv,src/service/errors.ts,无法采集屏幕，请检查屏幕录制权限和显示器状态,无法采集屏幕，请检查屏幕录制权限和显示器状态,無法採集螢幕，請檢查螢幕錄製權限和顯示器狀態,Unable to capture the screen. Check Screen Recording permission and display status.
 zM0484,src/service/errors.ts,无法切换受控端输入法,无法切换受控端输入法,無法切換受控端輸入法,Unable to switch the remote input source
+4f3p6e,src/components/RemoteDesktopDialog.tsx,点击开启拖动画面，或在此横向、纵向滚动来平移,点击开启拖动画面，或在此横向、纵向滚动来平移,點擊開啟拖動畫面，或在此橫向、縱向捲動來平移,"Click to enable drag-to-pan, or scroll here to pan in either direction"
+AG7aWI,src/components/RemoteDesktopDialog.tsx,放大后可平移画面,放大后可平移画面,放大後可平移畫面,Zoom in to pan the desktop
+T6Slfa,src/components/RemoteDesktopDialog.tsx,点击退出拖动画面模式,点击退出拖动画面模式,點擊退出拖動畫面模式,Click to exit drag-to-pan mode
