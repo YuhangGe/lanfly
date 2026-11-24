@@ -150,6 +150,7 @@ export class DesktopControl {
   #attached = false;
   #capsPress = new CapsLockPress();
   #keyboardLocked = false;
+  #fullscreenEscape = false;
   #native?: NativeDesktopKeyboard;
 
   constructor(
@@ -163,7 +164,10 @@ export class DesktopControl {
       this.#native = new NativeDesktopKeyboard(
         keyboard,
         (events) => {
-          for (const event of events) this.#send(event);
+          for (const event of events) {
+            if (event.t === 'key' && this.#escape(event.key, event.down)) continue;
+            this.#send(event);
+          }
         },
         () => {
           this.stage.blur();
@@ -222,6 +226,7 @@ export class DesktopControl {
 
   release(): void {
     this.#native?.blur();
+    this.#fullscreenEscape = false;
     this.#buttons.clear();
     this.#capsPress.reset();
     this.#send({ t: 'release' });
@@ -390,7 +395,29 @@ export class DesktopControl {
     });
   }
 
+  #escape(key: number, down: boolean): boolean {
+    if (key !== 53) return false;
+    // Consume the matching release/repeats too, even after fullscreen has exited.
+    if (this.#fullscreenEscape) {
+      if (!down) this.#fullscreenEscape = false;
+      return true;
+    }
+    if (!down || !document.fullscreenElement) return false;
+    this.#fullscreenEscape = true;
+    // Native capture and Keyboard Lock can intercept Escape before the browser.
+    // Exit locally rather than forwarding this press to the controlled machine.
+    void document.exitFullscreen().catch(() => {
+      this.#fullscreenEscape = false;
+    });
+    return true;
+  }
+
   #key(event: KeyboardEvent, down: boolean): void {
+    if (event.code === 'Escape' && this.#escape(53, down)) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     if (this.#native?.ownsKeyboard) {
       event.preventDefault();
       event.stopPropagation();

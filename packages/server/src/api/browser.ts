@@ -2,11 +2,6 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 
 import {
   JSON_BODY_LIMIT,
-  desktopIceInput,
-  desktopOfferInput,
-  desktopRejectInput,
-  desktopRequestInput,
-  desktopDisplayInput,
   retryMessageInput,
   sendFileInput,
   sendMessageInput,
@@ -100,30 +95,6 @@ export async function handleBrowserRequest(
           z.object({ name: z.string().trim().min(1).max(64) }).parse(input).name,
         );
         break;
-      case 'desktopDisplay':
-        result = await app.desktop.displayModes(desktopDisplayInput.parse(input).peerId);
-        break;
-      case 'desktopRequest':
-        result = await app.desktop.request(id, desktopRequestInput.parse(input));
-        break;
-      case 'desktopState':
-        result = app.desktop.state(id);
-        break;
-      case 'desktopOffer': {
-        const p = desktopOfferInput.parse(input);
-        result = await app.desktop.offer(id, p.sessionId, p.sdp);
-        break;
-      }
-      case 'desktopIce': {
-        const p = desktopIceInput.parse(input);
-        await app.desktop.ice(id, p.sessionId, p.candidate);
-        break;
-      }
-      case 'desktopStop': {
-        const p = desktopRejectInput.parse(input);
-        await app.desktop.stopSession(id, p.sessionId, p.reason);
-        break;
-      }
       default:
         throw new HttpError(403, 'FORBIDDEN');
     }

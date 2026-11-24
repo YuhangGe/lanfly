@@ -29,7 +29,6 @@ Mgn63M,src/App.tsx,已复制局域网地址,已复制局域网地址,已複製�
 O1Xp81,src/App.tsx,左侧列表中的设备与你运行着同一个 lanfly。选择后可以发送消息、拖拽文件，或直接粘贴截图。,左侧列表中的设备与你运行着同一个 lanfly。选择后可以发送消息、拖拽文件，或直接粘贴截图。,左側列表中的裝置與你執行著同一個 lanfly。選擇後可以傳送訊息、拖曳檔案，或直接貼上截圖。,"The devices in the left list run the same lanfly. Select one to send messages, drag files, or paste a screenshot."
 Oj85cC,src/App.tsx,发送文件,发送文件,傳送檔案,Send file
 P7QUlF,src/App.tsx,请先选择一台设备,请先选择一台设备,請先選擇一臺裝置,Select a device first
-PAFL75,src/App.tsx,屏幕共享中,屏幕共享中,螢幕分享中,Sharing screen
 Pr+Ah1,src/App.tsx,已作为独立设备接入,已作为独立设备接入,已作為獨立裝置接入,Connected as an independent device
 PwpMCK,src/App.tsx,尚未加载,尚未加载,尚未載入,Not loaded
 S/qcU+,src/App.tsx,已接收 {name},已接收 {name},已接收 {name},Received {name}
@@ -62,7 +61,6 @@ kuCzJl,src/App.tsx,松开鼠标发送文件,松开鼠标发送文件,鬆開滑�
 lVcBSJ,src/App.tsx,当前正在与,当前正在与,目前正在與,Currently connected to
 lfZ6LI,src/App.tsx,设备已重新连接,设备已重新连接,裝置已重新連線,Device reconnected
 llLRjA,src/App.tsx,目标设备,目标设备,目標裝置,Target device
-mtfb1D,src/App.tsx,屏幕共享中，点击打开,屏幕共享中，点击打开,螢幕分享中，點選開啟,Sharing screen — click to open
 n+N4na,src/App.tsx,文件 {name} 发送失败,文件 {name} 发送失败,檔案 {name} 傳送失敗,Failed to send {name}
 nE4JHJ,src/App.tsx,正在重连…,正在重连…,正在重連…,Reconnecting…
 oPnET6,src/App.tsx,发送给 {name}…,发送给 {name}…,傳送給 {name}…,Message {name}…
@@ -83,7 +81,6 @@ wjLS5j,src/App.tsx,修改失败,修改失败,修改失敗,Rename failed
 KYd82x,src/components/AddPeerDialog.tsx,添加设备,添加设备,新增裝置,Add device
 KfOS0j,src/components/AddPeerDialog.tsx,192.168.1.23 或 192.168.1.23:8087,192.168.1.23 或 192.168.1.23:8087,192.168.1.23 或 192.168.1.23:8087,192.168.1.23 or 192.168.1.23:8087
 SxUCF3,src/components/AddPeerDialog.tsx,连接中…,连接中…,連線中…,Connecting…
-WWyf+/,src/components/Dialog.tsx,关闭{title},关闭{title},關閉{title},Close {title}
 0SsgZX,src/components/InputSharingDialog.tsx,已停止,已停止,已停止,Stopped
 1O3bwQ,src/components/InputSharingDialog.tsx,两台单屏 Mac 共用一套键鼠。选择本机角色后连接，对方自动使用相反角色，无需配对或确认校验码。,两台单屏 Mac 共用一套键鼠。选择本机角色后连接，对方自动使用相反角色，无需配对或确认校验码。,兩臺單屏 Mac 共用一套鍵鼠。選擇本機角色後連線，對方自動使用相反角色，無需配對或確認校驗碼。,Share one keyboard and mouse between two single-display Macs. Choose this device's role and connect; the other side automatically takes the opposite role. No pairing or verification code is needed.
 2ZjbLY,src/components/InputSharingDialog.tsx,键鼠共享,键鼠共享,鍵鼠共享,Keyboard & Mouse Sharing
@@ -148,17 +145,16 @@ odmQEy,src/components/PeerList.tsx,移除 {name},移除 {name},移除 {name},Rem
 yb3AuG,src/components/PeerList.tsx,离线,离线,離線,Offline
 0suTy9,src/components/RemoteDesktopDialog.tsx,显示器：{screens} 个,显示器：{screens} 个,顯示器：{screens} 個,Displays: {screens}
 2h4etD,src/components/RemoteDesktopDialog.tsx,已授权,已授权,已授權,Granted
-3VaCo6,src/components/RemoteDesktopDialog.tsx, 视频分辨率 {width}×{height} 像素。, 视频分辨率 {width}×{height} 像素。, 視訊解析度 {width}×{height} 像素。, Video resolution: {width}×{height} pixels.
 47GdDb,src/components/RemoteDesktopDialog.tsx,关闭,关闭,關閉,Close
 47euGR,src/components/RemoteDesktopDialog.tsx,这个会话已经由另一个页面建立，请先结束会话后重试。,这个会话已经由另一个页面建立，请先结束会话后重试。,這個會話已經由另一個頁面建立，請先結束會話後重試。,This session was created in another page. End it there and try again.
 5uzAQw,src/components/RemoteDesktopDialog.tsx,停止远程桌面,停止远程桌面,停止遠端桌面,Stop Remote Desktop
+7M1/fC,src/components/RemoteDesktopDialog.tsx,点击右上角关闭按钮可结束共享。停止后对方会立即失去画面和控制。,点击右上角关闭按钮可结束共享。停止后对方会立即失去画面和控制。,點擊右上角關閉按鈕可結束共享。停止後對方會立即失去畫面和控制。,Click the close button at the top right to stop sharing. The other device will immediately lose the video and control.
 8xNWjB,src/components/RemoteDesktopDialog.tsx,远程桌面,远程桌面,遠端桌面,Remote Desktop
 9U7ve1,src/components/RemoteDesktopDialog.tsx,超高清（16 Mbps）,超高清（16 Mbps）,超高畫質（16 Mbps）,Ultra HD (16 Mbps)
 9yQugt,src/components/RemoteDesktopDialog.tsx,连接失败,连接失败,連線失敗,Connection failed
 A275S2,src/components/RemoteDesktopDialog.tsx,选择一台局域网内的 Mac，发起后对方自动接受并开启鼠标键盘控制。视频通过 WebRTC 直接传输，不经过 Node.js 中转。被控端需预先授予屏幕录制和辅助功能权限。,选择一台局域网内的 Mac，发起后对方自动接受并开启鼠标键盘控制。视频通过 WebRTC 直接传输，不经过 Node.js 中转。被控端需预先授予屏幕录制和辅助功能权限。,選擇一臺區域網路內的 Mac，發起後對方自動接受並開啟滑鼠鍵盤控制。影片透過 WebRTC 直接傳輸，不經過 Node.js 中轉。被控端需預先授予螢幕錄製和輔助功能權限。,"Choose a Mac on your LAN. After you start, the other side accepts automatically and enables keyboard and mouse control. Video is sent directly over WebRTC, not through Node.js. The controlled Mac must first grant Screen Recording and Accessibility permissions."
 AUMcPK,src/components/RemoteDesktopDialog.tsx,缩放,缩放,縮放,Zoom
 BHu4kO,src/components/RemoteDesktopDialog.tsx,超高清（32 Mbps）,超高清（32 Mbps）,超高畫質（32 Mbps）,Ultra HD (32 Mbps)
-BTbRjm,src/components/RemoteDesktopDialog.tsx,铺满窗口,铺满窗口,鋪滿視窗,Fill window
 BxIGh6,src/components/RemoteDesktopDialog.tsx,正在连接…,正在连接…,正在連線…,Connecting…
 H/Hnbt,src/components/RemoteDesktopDialog.tsx,对方拒绝了远程桌面请求,对方拒绝了远程桌面请求,對方拒絕了遠端桌面請求,The other device declined the remote desktop request
 HRfIoo,src/components/RemoteDesktopDialog.tsx,建立后会自动开启鼠标和键盘控制，不需要对方再确认。,建立后会自动开启鼠标和键盘控制，不需要对方再确认。,建立後會自動開啟滑鼠和鍵盤控制，不需要對方再確認。,Keyboard and mouse control is enabled automatically after connecting; the other side does not need to confirm again.
@@ -167,19 +163,17 @@ JD/qdH,src/components/RemoteDesktopDialog.tsx,等待对方授权,等待对方授
 Jad3fC,src/components/RemoteDesktopDialog.tsx,原始像素,原始像素,原始像素,Original pixels
 JmYD8x,src/components/RemoteDesktopDialog.tsx,远程桌面画面,远程桌面画面,遠端桌面畫面,Remote desktop view
 Kic9XP,src/components/RemoteDesktopDialog.tsx,未授权,未授权,未授權,Not granted
-Kkca8X,src/components/RemoteDesktopDialog.tsx,点击画面后可使用鼠标和键盘；离开窗口会释放所有按键。,点击画面后可使用鼠标和键盘；离开窗口会释放所有按键。,點選畫面後可使用滑鼠和鍵盤；離開視窗會釋放所有按鍵。,Click the view to use the mouse and keyboard. Leaving the window releases all keys.
 LNSf4B,src/components/RemoteDesktopDialog.tsx,正在读取支持的分辨率…,正在读取支持的分辨率…,正在讀取支援的解析度…,Loading supported resolutions…
 MLr9kg,src/components/RemoteDesktopDialog.tsx,远程设备,远程设备,遠端裝置,Remote device
 MPfUCd,src/components/RemoteDesktopDialog.tsx,正在向 {name} 共享屏幕，鼠标键盘控制已同时开启。,正在向 {name} 共享屏幕，鼠标键盘控制已同时开启。,正在向 {name} 共享螢幕，滑鼠鍵盤控制已同時開啟。,Sharing your screen with {name}; keyboard and mouse control is enabled.
 Otz46V,src/components/RemoteDesktopDialog.tsx,请求系统授权,请求系统授权,請求系統授權,Request system permissions
-PrkPvI,src/components/RemoteDesktopDialog.tsx, Ctrl + Option + Command + Esc 可释放本机键盘。, Ctrl + Option + Command + Esc 可释放本机键盘。, Ctrl + Option + Command + Esc 可釋放本機鍵盤。, Press Ctrl + Option + Command + Esc to release the local keyboard.
 Psba0k,src/components/RemoteDesktopDialog.tsx,最小化{title},最小化{title},最小化{title},Minimize {title}
 RgEWCL,src/components/RemoteDesktopDialog.tsx,SDP 交换失败,SDP 交换失败,SDP 交換失敗,SDP exchange failed
 SVemw7,src/components/RemoteDesktopDialog.tsx,会话已停止。,会话已停止。,會話已停止。,The session has stopped.
 TgT2E9,src/components/RemoteDesktopDialog.tsx,远端显示尺寸,远端显示尺寸,遠端顯示尺寸,Remote display size
 UMU42c,src/components/RemoteDesktopDialog.tsx,选择设备,选择设备,選擇裝置,Select a device
 UwzxFA,src/components/RemoteDesktopDialog.tsx,请选择一台在线设备,请选择一台在线设备,請選擇一臺線上裝置,Select an online device
-VqCPpT,src/components/RemoteDesktopDialog.tsx,屏幕录制：{status},屏幕录制：{status},螢幕錄製：{status},Screen Recording: {status}
+WWyf+/,src/components/RemoteDesktopDialog.tsx,关闭{title},关闭{title},關閉{title},Close {title}
 X7AKa5,src/components/RemoteDesktopDialog.tsx,控制通道正在建立，视频已可查看,控制通道正在建立，视频已可查看,控制通道正在建立，影片已可檢視,The control channel is connecting; video is already available.
 Xn5mou,src/components/RemoteDesktopDialog.tsx,清晰（8 Mbps）,清晰（8 Mbps）,清晰（8 Mbps）,Clear (8 Mbps)
 YuOHnE,src/components/RemoteDesktopDialog.tsx,按远端逻辑桌面尺寸选择，结束会话后恢复原设置。,按远端逻辑桌面尺寸选择，结束会话后恢复原设置。,依遠端邏輯桌面尺寸選擇，結束工作階段後還原原設定。,Choose the remote logical desktop size. The original setting is restored when the session ends.
@@ -187,24 +181,21 @@ ZEeTOJ,src/components/RemoteDesktopDialog.tsx,无法生成 SDP offer,无法生�
 Zk4NN5,src/components/RemoteDesktopDialog.tsx,请选择一台设备,请选择一台设备,請選擇一臺裝置,Select a device
 aV+qBC,src/components/RemoteDesktopDialog.tsx,（离线）,（离线）,（離線）,(Offline)
 apRBGd,src/components/RemoteDesktopDialog.tsx,会话已结束,会话已结束,會話已結束,The session has ended
+cBdJbc,src/components/RemoteDesktopDialog.tsx,帧率,帧率,幀率,Frame rate
 cObnhd,src/components/RemoteDesktopDialog.tsx,保持当前分辨率,保持当前分辨率,保持目前解析度,Keep current resolution
-d7IA6s,src/components/RemoteDesktopDialog.tsx,结束会话,结束会话,結束會話,End session
 djBeK4,src/components/RemoteDesktopDialog.tsx,正在建立视频连接,正在建立视频连接,正在建立影片連線,Establishing video connection
 dyG8BX,src/components/RemoteDesktopDialog.tsx,远程桌面已结束,远程桌面已结束,遠端桌面已結束,Remote desktop ended
 fAfWIk,src/components/RemoteDesktopDialog.tsx,均衡（4 Mbps）,均衡（4 Mbps）,均衡（4 Mbps）,Balanced (4 Mbps)
 fjTZr2,src/components/RemoteDesktopDialog.tsx,退出全屏,退出全屏,退出全螢幕,Exit fullscreen
 gY67fJ,src/components/RemoteDesktopDialog.tsx,手机浏览器也可作为查看端；控制端需要 macOS 的辅助功能权限。,手机浏览器也可作为查看端；控制端需要 macOS 的辅助功能权限。,手機瀏覽器也可作為檢視端；控制端需要 macOS 的輔助功能權限。,Mobile browsers can also view; the controller needs macOS Accessibility permission.
-hHfH/L,src/components/RemoteDesktopDialog.tsx,放大后可启用拖动，或按住鼠标中键平移；滚轮仍控制远端。,放大后可启用拖动，或按住鼠标中键平移；滚轮仍控制远端。,放大後可啟用拖曳，或按住滑鼠中鍵平移；滾輪仍控制遠端。,"After zooming in, enable panning or drag with the middle mouse button. Scrolling still controls the remote desktop."
 j1M+nF,src/components/RemoteDesktopDialog.tsx,输入监控：{status},输入监控：{status},輸入監控：{status},Input Monitoring: {status}
 jdKFUQ,src/components/RemoteDesktopDialog.tsx,无法发起远程桌面请求,无法发起远程桌面请求,無法發起遠端桌面請求,Unable to start the remote desktop request
 kkKvgI,src/components/RemoteDesktopDialog.tsx,可控制,可控制,可控制,Controllable
 kvCIdA,src/components/RemoteDesktopDialog.tsx,拖动画面,拖动画面,拖曳畫面,Pan view
-l30tWn,src/components/RemoteDesktopDialog.tsx,随时可以点击“停止远程桌面”结束共享。停止后对方会立即失去画面和控制。,随时可以点击“停止远程桌面”结束共享。停止后对方会立即失去画面和控制。,隨時可以點選“停止遠端桌面”結束共享。停止後對方會立即失去畫面和控制。,Click “Stop Remote Desktop” at any time to end sharing. The other side immediately loses the video and control.
 nC4M/u,src/components/RemoteDesktopDialog.tsx,适配主控屏幕,适配主控屏幕,配合主控螢幕,Match controller screen
 nhuWkk,src/components/RemoteDesktopDialog.tsx,无法建立远程桌面连接,无法建立远程桌面连接,無法建立遠端桌面連線,Unable to establish a remote desktop connection
 njzzW/,src/components/RemoteDesktopDialog.tsx,画质,画质,畫質,Quality
 nlSVjW,src/components/RemoteDesktopDialog.tsx,WebRTC 连接失败，请确认两台设备在同一局域网内。,WebRTC 连接失败，请确认两台设备在同一局域网内。,WebRTC 連線失敗，請確認兩臺裝置在同一區域網路內。,WebRTC connection failed. Make sure both devices are on the same LAN.
-o6GecA,src/components/RemoteDesktopDialog.tsx,普通窗口,普通窗口,一般視窗,Normal window
 p7Qg0s,src/components/RemoteDesktopDialog.tsx,开始远程桌面,开始远程桌面,開始遠端桌面,Start Remote Desktop
 plnqF9,src/components/RemoteDesktopDialog.tsx,远端暂不支持分辨率选择，将保持当前设置。,远端暂不支持分辨率选择，将保持当前设置。,遠端暫不支援解析度選擇，將保持目前設定。,Resolution selection is unavailable. The current setting will be kept.
 qDbkOz,src/components/RemoteDesktopDialog.tsx,对方拒绝：{reason},对方拒绝：{reason},對方拒絕：{reason},Declined: {reason}
@@ -225,16 +216,19 @@ HAxgB3,src/service/browser.ts,修改名称失败,修改名称失败,修改名稱
 kKjYPK,src/service/browser.ts,无法接入，请确认 lanfly 仍在运行,无法接入，请确认 lanfly 仍在运行,無法接入，請確認 lanfly 仍在執行,Unable to join. Make sure lanfly is still running.
 wifQou,src/service/browser.ts,浏览器,浏览器,瀏覽器,Browser
 +azVgO,src/service/errors.ts,显示器布局发生变化，远程桌面已停止，请重新连接,显示器布局发生变化，远程桌面已停止，请重新连接,顯示器佈局發生變化，遠端桌面已停止，請重新連線,The display layout changed. Remote desktop stopped; reconnect.
++hLeF2,src/service/errors.ts,无法检查受控端权限，请先升级受控端 Lanfly 后重试,无法检查受控端权限，请先升级受控端 Lanfly 后重试,無法檢查受控端權限，請先升級受控端 Lanfly 後重試,Cannot verify remote permissions. Upgrade Lanfly on the remote computer and retry.
 /btMnl,src/service/errors.ts,远程桌面请求的设备与当前会话不匹配,远程桌面请求的设备与当前会话不匹配,遠端桌面請求的裝置與目前會話不匹配,The device in the remote desktop request does not match the current session.
 /uLs8s,src/service/errors.ts,无法连接对方，请检查网络或防火墙,无法连接对方，请检查网络或防火墙,無法連線對方，請檢查網路或防火牆,Unable to reach the other device. Check the network or firewall.
 10wAI4,src/service/errors.ts,键鼠连接已中断，本机控制已恢复,键鼠连接已中断，本机控制已恢复,鍵鼠連線已中斷，本機控制已恢復,Keyboard/mouse connection lost. Local control has been restored.
 14by4B,src/service/errors.ts,系统无法锁定本机光标，共享已停止，请重启 lanfly 后重试,系统无法锁定本机光标，共享已停止，请重启 lanfly 后重试,系統無法鎖定本機游標，共享已停止，請重啟 lanfly 後重試,The system could not lock the local cursor. Sharing stopped; restart lanfly and try again.
 2G5u15,src/service/errors.ts,远程桌面会话已关闭,远程桌面会话已关闭,遠端桌面會話已關閉,The remote desktop session was closed.
 2V6l95,src/service/errors.ts,发送页面未响应，请保持发送页面打开后重新下载,发送页面未响应，请保持发送页面打开后重新下载,傳送頁面未響應，請保持傳送頁面開啟後重新下載,The sending page is not responding. Keep it open and download again.
+2ax/TU,src/service/errors.ts,远程桌面必须允许键鼠控制，不支持仅共享屏幕,远程桌面必须允许键鼠控制，不支持仅共享屏幕,遠端桌面必須允許鍵鼠控制，不支援僅共用螢幕,Remote desktop requires keyboard and mouse control. Screen-only sharing is unsupported.
 49r3dy,src/service/errors.ts,没有找到可采集的显示器,没有找到可采集的显示器,沒有找到可採集的顯示器,No display available for capture.
 4HPvHH,src/service/errors.ts,需要屏幕录制权限，请在系统设置中授权后重试,需要屏幕录制权限，请在系统设置中授权后重试,需要螢幕錄製權限，請在系統設定中授權後重試,Screen Recording permission is required. Grant it in System Settings and try again.
 64JySy,src/service/errors.ts,对方未在有效时间内响应请求,对方未在有效时间内响应请求,對方未在有效時間內響應請求,The other side did not respond in time.
 6BnSh2,src/service/errors.ts,当前正在处理另一条键鼠连接，请稍后再试,当前正在处理另一条键鼠连接，请稍后再试,目前正在處理另一條鍵鼠連線，請稍後再試,Another keyboard/mouse connection is in progress. Try again later.
+6ErrNI,src/service/errors.ts,受控端原生桌面组件不可用，请检查系统支持情况和 Lanfly 安装,受控端原生桌面组件不可用，请检查系统支持情况和 Lanfly 安装,受控端原生桌面元件無法使用，請檢查系統支援情況和 Lanfly 安裝,The remote native desktop component is unavailable. Check system support and the Lanfly installation.
 A0FcoN,src/service/errors.ts,键鼠共享暂时只支持双方各一个显示器,键鼠共享暂时只支持双方各一个显示器,鍵鼠共享暫時只支援雙方各一個顯示器,Keyboard & Mouse Sharing currently requires exactly one display on each side.
 A8oUw0,src/service/errors.ts,无法创建下载目录,无法创建下载目录,無法建立下載目錄,Unable to create the download folder.
 AZ5efx,src/service/errors.ts,Room ID 不一致，无法连接,Room ID 不一致，无法连接,Room ID 不一致，無法連線,Room IDs do not match; unable to connect.
@@ -254,9 +248,11 @@ KoWKmX,src/service/errors.ts,这条消息无法重试,这条消息无法重试,�
 L4SpP4,src/service/errors.ts,设备已离线或不存在,设备已离线或不存在,裝置已離線或不存在,The device is offline or no longer exists.
 LBL/0C,src/service/errors.ts,对方返回了无法识别的数据，版本可能不兼容,对方返回了无法识别的数据，版本可能不兼容,對方返回了無法識別的資料，版本可能不相容,The other device returned unrecognized data. The versions may be incompatible.
 MAWyWc,src/service/errors.ts,传输凭证无效,传输凭证无效,傳輸憑證無效,The transfer credential is invalid.
+NlDzti,src/service/errors.ts,远程桌面仅支持本机入口，请在运行 Lanfly 的电脑上通过 localhost 打开,远程桌面仅支持本机入口，请在运行 Lanfly 的电脑上通过 localhost 打开,遠端桌面僅支援本機入口，請在執行 Lanfly 的電腦上透過 localhost 開啟,Remote desktop requires the local entry. Open localhost on the computer running Lanfly.
 NnM89u,src/service/errors.ts,保存文件失败，请检查磁盘空间和权限,保存文件失败，请检查磁盘空间和权限,儲存檔案失敗，請檢查磁碟空間和權限,Failed to save the file. Check disk space and permissions.
 ObbFYJ,src/service/errors.ts,远程桌面连接已断开,远程桌面连接已断开,遠端桌面連線已斷開,The remote desktop connection was lost.
 PK74R4,src/service/errors.ts,远程桌面参数不正确,远程桌面参数不正确,遠端桌面引數不正確,Invalid remote desktop parameters.
+PLlAWC,src/service/errors.ts,主控端缺少键鼠权限，请在主控电脑的系统设置中授予辅助功能和输入监控权限后重试,主控端缺少键鼠权限，请在主控电脑的系统设置中授予辅助功能和输入监控权限后重试,主控端缺少鍵鼠權限，請在主控電腦的系統設定中授予輔助使用和輸入監控權限後重試,The controller needs Accessibility and Input Monitoring permissions. Grant them in its System Settings and retry.
 QNqXK+,src/service/errors.ts,原生键鼠组件出现异常，共享已停止,原生键鼠组件出现异常，共享已停止,原生鍵鼠元件出現異常，共享已停止,The native keyboard/mouse component failed. Sharing stopped.
 Qisl2P,src/service/errors.ts,无法建立 WebRTC 会话,无法建立 WebRTC 会话,無法建立 WebRTC 會話,Unable to create the WebRTC session.
 Qw+9dp,src/service/errors.ts,ICE candidate 交换失败,ICE candidate 交换失败,ICE candidate 交換失敗,ICE candidate exchange failed.
@@ -290,6 +286,8 @@ pWAcg8,src/service/errors.ts,无法创建视频轨道,无法创建视频轨道,�
 pvl8sc,src/service/errors.ts,远程桌面仅支持 macOS 12.3 或更高版本,远程桌面仅支持 macOS 12.3 或更高版本,遠端桌面僅支援 macOS 12.3 或更高版本,Remote desktop requires macOS 12.3 or later.
 sgdkwG,src/service/errors.ts,不能连接到本机,不能连接到本机,不能連線到本機,You cannot connect to this device.
 soyD9H,src/service/errors.ts,对方拒绝了连接，请检查 Room ID,对方拒绝了连接，请检查 Room ID,對方拒絕了連線，請檢查 Room ID,The other device declined the connection. Check the Room ID.
+t3JAa3,src/service/errors.ts,受控端缺少屏幕录制权限，请在受控电脑的系统设置中授权后重试,受控端缺少屏幕录制权限，请在受控电脑的系统设置中授权后重试,受控端缺少螢幕錄製權限，請在受控電腦的系統設定中授權後重試,The remote computer needs Screen Recording permission. Grant it in its System Settings and retry.
+tI3xl3,src/service/errors.ts,受控端缺少键鼠控制权限，请在受控电脑的系统设置中授予辅助功能权限后重试,受控端缺少键鼠控制权限，请在受控电脑的系统设置中授予辅助功能权限后重试,受控端缺少鍵鼠控制權限，請在受控電腦的系統設定中授予輔助使用權限後重試,The remote computer needs Accessibility permission for keyboard and mouse control. Grant it in its System Settings and retry.
 tKMPEE,src/service/errors.ts,无法启动 WebRTC 运行时,无法启动 WebRTC 运行时,無法啟動 WebRTC 執行時,Unable to start the WebRTC runtime.
 us6wb2,src/service/errors.ts,传输不存在,传输不存在,傳輸不存在,The transfer does not exist.
 w+xHur,src/service/errors.ts,没有协商出可用的 H.264 编码,没有协商出可用的 H.264 编码,沒有協商出可用的 H.264 編碼,No usable H.264 codec was negotiated.

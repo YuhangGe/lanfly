@@ -17,6 +17,19 @@ export function registerErrors() {
     INPUT_CURSOR_CAPTURE: t('系统无法锁定本机光标，共享已停止，请重启 lanfly 后重试'),
     INPUT_INTERRUPTED: t('显示器发生变化或键鼠处理超时，共享已断开'),
     INPUT_CONNECTION_LOST: t('键鼠连接已中断，本机控制已恢复'),
+    DESKTOP_LOCAL_ONLY: t('远程桌面仅支持本机入口，请在运行 Lanfly 的电脑上通过 localhost 打开'),
+    DESKTOP_CONTROLLER_INPUT_PERMISSION: t(
+      '主控端缺少键鼠权限，请在主控电脑的系统设置中授予辅助功能和输入监控权限后重试',
+    ),
+    DESKTOP_REMOTE_SCREEN_PERMISSION: t(
+      '受控端缺少屏幕录制权限，请在受控电脑的系统设置中授权后重试',
+    ),
+    DESKTOP_REMOTE_INPUT_PERMISSION: t(
+      '受控端缺少键鼠控制权限，请在受控电脑的系统设置中授予辅助功能权限后重试',
+    ),
+    DESKTOP_REMOTE_NATIVE_MISSING: t('受控端原生桌面组件不可用，请检查系统支持情况和 Lanfly 安装'),
+    DESKTOP_PEER_UPGRADE_REQUIRED: t('无法检查受控端权限，请先升级受控端 Lanfly 后重试'),
+    DESKTOP_CONTROL_REQUIRED: t('远程桌面必须允许键鼠控制，不支持仅共享屏幕'),
     DESKTOP_UNSUPPORTED: t('远程桌面仅支持 macOS 12.3 或更高版本'),
     DESKTOP_NATIVE_MISSING: t('原生桌面组件未安装，请重新安装包含桌面模块的 lanfly'),
     DESKTOP_PERMISSION: t('需要屏幕录制权限，请在系统设置中授权后重试'),

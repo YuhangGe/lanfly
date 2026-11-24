@@ -3,6 +3,7 @@
 use std::ffi::{CStr, c_char, c_void};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use crossbeam_channel::{Sender, TrySendError};
 
@@ -36,6 +37,7 @@ unsafe extern "C" {
 pub struct CapturedFrame {
     buffer: CVPixelBufferRef,
     pub pts_seconds: f64,
+    pub captured_at: Instant,
 }
 
 // The pointer is a CoreVideo buffer with its own retain count. Sending the retained handle to
@@ -88,6 +90,7 @@ extern "C" fn capture_frame(
     let frame = CapturedFrame {
         buffer,
         pts_seconds,
+        captured_at: Instant::now(),
     };
     match context.frames.try_send(frame) {
         Ok(()) => {}

@@ -10,7 +10,9 @@ export default function Dialog(props: {
   children: JNode;
   onClose: () => void;
   onMinimize?: () => void;
+  hideHeader?: boolean;
   canClose?: boolean;
+  closeOnEscape?: boolean;
   closeOnBackdrop?: boolean;
   placement?: 'top' | 'center';
   size?: 'default' | 'compact' | 'wide' | 'screen' | 'viewport';
@@ -69,40 +71,47 @@ export default function Dialog(props: {
       ref={element}
       tabIndex={-1}
       aria-label={props.label ?? props.title}
-      aria-labelledby={(props.label ?? props.title) === props.title ? titleId : undefined}
+      aria-labelledby={
+        !props.hideHeader && (props.label ?? props.title) === props.title ? titleId : undefined
+      }
       aria-describedby={props.descriptionId}
       className={`dialog fixed inset-x-0 mx-auto max-h-[calc(100dvh-40px)] overflow-auto rounded-dialog border border-neutral-60 bg-neutral-30 p-5 text-neutral-100 shadow-dialog ${(props.placement ?? 'top') === 'center' ? 'inset-y-0 my-auto' : 'top-[min(17vh,150px)] bottom-auto my-0'} ${props.size === 'viewport' ? 'h-[calc(100dvh-24px)] max-h-[calc(100dvh-24px)] w-[calc(100vw-24px)]' : (props.size ?? 'default') === 'screen' ? 'w-[min(1080px,calc(100vw-24px))]' : (props.size ?? 'default') === 'wide' ? 'w-[min(580px,calc(100vw-40px))]' : (props.size ?? 'default') === 'compact' ? 'w-[min(320px,calc(100vw-40px))]' : 'w-[min(430px,calc(100vw-40px))]'} ${props.className ?? ''}`}
       on:cancel={(event) => {
         event.preventDefault();
-        if (props.canClose ?? true) props.onClose();
+        if ((props.canClose ?? true) && (props.closeOnEscape ?? true)) props.onClose();
       }}
     >
-      <div className="mb-5 flex items-center justify-between text-[14px] text-neutral-110">
-        <strong id={titleId}>{props.title}</strong>
-        <div className="flex items-center gap-1.5">
-          {props.onMinimize && (
-            <Button
-              size="bare"
-              className="grid size-8 place-items-center rounded-control text-[18px]"
-              aria-label={t('最小化{title}', { title: props.title })}
-              title={t('最小化{title}', { title: props.title })}
-              on:click={props.onMinimize}
-            >
-              <span className="icon-[codicon--chrome-minimize] align-middle" aria-hidden="true" />
-            </Button>
-          )}
-          {(props.canClose ?? true) && (
-            <Button
-              size="bare"
-              className="text-[18px] text-neutral-90 hover:text-neutral-110"
-              aria-label={t('关闭{title}', { title: props.title })}
-              on:click={props.onClose}
-            >
-              <span className="icon-[codicon--close] align-middle" aria-hidden="true" />
-            </Button>
-          )}
+      {!props.hideHeader && (
+        <div className="mb-5 flex items-center justify-between text-[14px] text-neutral-110">
+          <strong id={titleId}>{props.title}</strong>
+          <div className="flex items-center gap-1.5">
+            {props.onMinimize && (
+              <Button
+                size="bare"
+                className="grid size-8 place-items-center rounded-control text-[18px] leading-none"
+                aria-label={t('最小化{title}', { title: props.title })}
+                title={t('最小化{title}', { title: props.title })}
+                on:click={props.onMinimize}
+              >
+                <span
+                  className="icon-[codicon--chrome-minimize] translate-y-[0.5px]"
+                  aria-hidden="true"
+                />
+              </Button>
+            )}
+            {(props.canClose ?? true) && (
+              <Button
+                size="bare"
+                className="grid size-8 place-items-center rounded-control text-[18px] leading-none text-neutral-90 hover:text-neutral-110"
+                aria-label={t('关闭{title}', { title: props.title })}
+                on:click={props.onClose}
+              >
+                <span className="icon-[codicon--close]" aria-hidden="true" />
+              </Button>
+            )}
+          </div>
         </div>
-      </div>
+      )}
       {props.children}
     </dialog>
   );

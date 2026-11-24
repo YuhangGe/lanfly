@@ -1,11 +1,12 @@
-import type {
-  AppState,
-  ChatMessage,
-  DesktopSessionView,
-  PeerInfo,
-  TransferView,
+import {
+  desktopPermissionError,
+  type AppState,
+  type ChatMessage,
+  type DesktopSessionView,
+  type DesktopStatus,
+  type PeerInfo,
+  type TransferView,
 } from '@lanfly/common';
-
 import { afterEach, describe, expect, it } from 'bun:test';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { access, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -377,47 +378,62 @@ describe('双实例集成', () => {
       const current = await state(a);
       return current.peers.find((peer) => peer.name === 'DeskB');
     });
+    const localStatus = await rpc<DesktopStatus>(a, 'desktopStatus');
+    const remoteStatus = await rpc<DesktopStatus>(b, 'desktopStatus');
+    const missingPermission =
+      desktopPermissionError(localStatus.data, 'controller') ??
+      desktopPermissionError(remoteStatus.data, 'controlled');
     const requested = await rpc<DesktopSessionView>(a, 'desktopRequest', {
       peerId: target.id,
       bitrate: 32_000_000,
     });
-    expect(requested.error).toBeUndefined();
-    expect(requested.data?.phase).toBe('accepted');
-    expect(requested.data?.control).toBe(true);
-    expect(requested.data?.controlRequested).toBe(true);
+    if (missingPermission) {
+      expect(requested.error).toBe(missingPermission);
+      expect(
+        (await rpc<{ sessions: DesktopSessionView[] }>(a, 'desktopState')).data?.sessions,
+      ).toEqual([]);
+      expect(
+        (await rpc<{ sessions: DesktopSessionView[] }>(b, 'desktopState')).data?.sessions,
+      ).toEqual([]);
+    } else {
+      expect(requested.error).toBeUndefined();
+      expect(requested.data?.phase).toBe('accepted');
+      expect(requested.data?.control).toBe(true);
+      expect(requested.data?.controlRequested).toBe(true);
 
-    const receiving = await waitFor('B 自动接受会话', async () => {
-      const current = await rpc<{ sessions: DesktopSessionView[] }>(b, 'desktopState');
-      return current.data?.sessions.find(
-        (session) => session.sessionId === requested.data?.sessionId,
-      );
-    });
-    expect(receiving.role).toBe('controlled');
-    expect(receiving.phase).toBe('accepted');
-    expect(receiving.control).toBe(true);
+      const receiving = await waitFor('B 自动接受会话', async () => {
+        const current = await rpc<{ sessions: DesktopSessionView[] }>(b, 'desktopState');
+        return current.data?.sessions.find(
+          (session) => session.sessionId === requested.data?.sessionId,
+        );
+      });
+      expect(receiving.role).toBe('controlled');
+      expect(receiving.phase).toBe('accepted');
+      expect(receiving.control).toBe(true);
 
-    const preferences = await rpc<{ bitrates: Record<string, number> }>(a, 'desktopState');
-    expect(preferences.data?.bitrates[target.name]).toBe(32_000_000);
-    await waitFor('清晰度写入 data.json', async () => {
-      try {
-        const saved = JSON.parse(
-          await readFile(path.join(a.out, 'config', 'data.json'), 'utf8'),
-        ) as { desktopBitrates?: Record<string, number> };
-        return saved.desktopBitrates?.[target.name] === 32_000_000 ? true : undefined;
-      } catch {
-        return undefined;
-      }
-    });
+      const preferences = await rpc<{ bitrates: Record<string, number> }>(a, 'desktopState');
+      expect(preferences.data?.bitrates[target.name]).toBe(32_000_000);
+      await waitFor('清晰度写入 data.json', async () => {
+        try {
+          const saved = JSON.parse(
+            await readFile(path.join(a.out, 'config', 'data.json'), 'utf8'),
+          ) as { desktopBitrates?: Record<string, number> };
+          return saved.desktopBitrates?.[target.name] === 32_000_000 ? true : undefined;
+        } catch {
+          return undefined;
+        }
+      });
 
-    const stopped = await rpc(a, 'desktopStop', {
-      sessionId: requested.data!.sessionId,
-      reason: 'CANCELED',
-    });
-    expect(stopped.error).toBeUndefined();
-    await waitFor('发起方停止后 B 清除会话', async () => {
-      const current = await rpc<{ sessions: DesktopSessionView[] }>(b, 'desktopState');
-      return current.data?.sessions.length === 0 ? true : undefined;
-    });
+      const stopped = await rpc(a, 'desktopStop', {
+        sessionId: requested.data!.sessionId,
+        reason: 'CANCELED',
+      });
+      expect(stopped.error).toBeUndefined();
+      await waitFor('发起方停止后 B 清除会话', async () => {
+        const current = await rpc<{ sessions: DesktopSessionView[] }>(b, 'desktopState');
+        return current.data?.sessions.length === 0 ? true : undefined;
+      });
+    }
 
     const forgedId = crypto.randomUUID();
     const forged = await fetch(`${b.base}/api/v1/peer/desktop/request`, {

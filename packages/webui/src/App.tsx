@@ -100,6 +100,7 @@ export default function App() {
     desktopPeerId: '',
     desktopSessionId: '',
     desktopSharingId: '',
+    desktopStopping: false,
     desktopSwitch: null as {
       peerId: string;
       sessionId: string;
@@ -116,6 +117,7 @@ export default function App() {
   const composer = ref<HTMLTextAreaElement>();
   const fileInput = ref<HTMLInputElement>();
 
+  let desktopSharingRevision = 0;
   let eventSource: EventSource | undefined;
   let reconnectTimer: number | undefined;
   let disposed = false;
@@ -223,23 +225,26 @@ export default function App() {
   }
 
   async function resumeDesktop() {
-    if (browserMode) return;
+    if (browserMode || model.desktopStopping) return;
+    const revision = desktopSharingRevision;
     const [error, result] = await desktopState({ toastError: false });
-    if (error || !result) return;
+    if (error || !result || model.desktopStopping || revision !== desktopSharingRevision) return;
     const active = result.sessions.find(
       (session) =>
         session.role === 'controlled' &&
         (session.phase === 'accepted' ||
           session.phase === 'connecting' ||
-          session.phase === 'connected'),
+          session.phase === 'connected' ||
+          session.phase === 'disconnected'),
     );
-    if (!active || model.desktopOpen) return;
-    model.desktopPeerId = active.peerId;
-    model.desktopSessionId = active.sessionId;
+    if (!active) {
+      model.desktopSharingId = '';
+      return;
+    }
+    const sameSession = model.desktopSharingId === active.sessionId;
     model.desktopSharingId = active.sessionId;
-    model.desktopMinimized = false;
-    model.desktopOpen = true;
-    pushToast(t('{name} 正在查看并控制你的屏幕', { name: active.peerName }), 'info');
+    if (!sameSession)
+      pushToast(t('{name} 正在查看并控制你的屏幕', { name: active.peerName }), 'info');
   }
 
   async function refresh() {
@@ -402,6 +407,7 @@ export default function App() {
     source.addEventListener('desktop', (event) => {
       const payload = parseEvent<DesktopEvent>(event);
       if (!payload) return;
+      if (payload.type === 'accepted' || payload.type === 'ended') desktopSharingRevision++;
       emitDesktopEvent(payload);
       if (
         payload.type === 'ended' &&
@@ -415,27 +421,53 @@ export default function App() {
       }
       if (payload.type === 'accepted' && payload.session.role === 'controlled' && !browserMode) {
         const sameSession = model.desktopSharingId === payload.session.sessionId;
-        model.desktopPeerId = payload.session.peerId;
-        model.desktopSessionId = payload.session.sessionId;
-        model.inputOpen = false;
-        if (!sameSession) model.desktopMinimized = false;
-        model.desktopOpen = true;
         model.desktopSharingId = payload.session.sessionId;
-        pushToast(t('{name} 已开始查看并控制你的屏幕', { name: payload.session.peerName }), 'info');
+        model.inputOpen = false;
+        model.desktopOpen = false;
+        model.desktopMinimized = false;
+        if (!sameSession)
+          pushToast(
+            t('{name} 已开始查看并控制你的屏幕', { name: payload.session.peerName }),
+            'info',
+          );
       }
     });
+  }
+
+  async function stopSharingDesktop() {
+    const sessionId = model.desktopSharingId;
+    if (!sessionId || model.desktopStopping) return;
+    model.desktopStopping = true;
+    desktopSharingRevision++;
+    try {
+      const [error] = await desktopStop({
+        input: { sessionId, reason: 'USER_STOPPED' },
+        toastError: false,
+      });
+      if (error && error.code !== 'DESKTOP_NOT_FOUND' && error.code !== 'DESKTOP_STATE') {
+        pushToast(errorText(error), 'error');
+        return;
+      }
+      if (model.desktopSharingId === sessionId) model.desktopSharingId = '';
+    } finally {
+      model.desktopStopping = false;
+    }
   }
 
   function showDesktop(peerId: string) {
     model.desktopPeerId = peerId;
     model.desktopSessionId = '';
-    model.desktopSharingId = '';
     model.desktopMinimized = false;
     model.inputOpen = false;
     model.desktopOpen = true;
   }
 
   async function openDesktop(peerId = model.activePeerId) {
+    if (browserMode) return;
+    if (model.desktopSharingId) {
+      await stopSharingDesktop();
+      return;
+    }
     if (!peerId) return;
     if (model.desktopOpen && model.desktopPeerId === peerId) {
       model.desktopMinimized = false;
@@ -818,23 +850,20 @@ export default function App() {
           </div>
         )}
         <div className="ml-auto flex items-center gap-1.5">
-          {model.desktopSharingId && (
+          {model.desktopSharingId && !model.activePeerId && (
             <Button
               size="compact"
-              variant="ghost"
-              className="text-green-40"
-              title={t('屏幕共享中，点击打开')}
-              aria-label={t('屏幕共享中，点击打开')}
-              on:click={() => {
-                model.desktopMinimized = false;
-                model.desktopOpen = true;
-              }}
+              variant="danger"
+              disabled={model.desktopStopping}
+              title={t('停止远程桌面')}
+              aria-label={t('停止远程桌面')}
+              on:click={() => void stopSharingDesktop()}
             >
               <span
-                className="icon-[codicon--screen-normal] text-[13px] sm:mr-1"
+                className="icon-[codicon--debug-stop] align-middle text-[13px] sm:mr-1"
                 aria-hidden="true"
               />
-              <span className="max-[760px]:hidden">{t('屏幕共享中')}</span>
+              <span>{t('停止远程桌面')}</span>
             </Button>
           )}
           <LanguageSwitcher />
@@ -1066,22 +1095,32 @@ export default function App() {
                     </span>
                   </div>
                 </div>
-                {model.activePeer.kind !== 'browser' &&
-                  model.activePeer.online &&
-                  model.activePeer.id !== (browserMode ? model.self.gatewayId : undefined) && (
+                {!browserMode &&
+                  (model.desktopSharingId ||
+                    (model.activePeer.kind !== 'browser' &&
+                      model.activePeer.online &&
+                      model.activePeer.id !==
+                        (browserMode ? model.self.gatewayId : undefined))) && (
                     <Button
                       size="compact"
-                      variant="ghost"
-                      className="shrink-0 text-neutral-80 hover:text-neutral-110"
-                      title={t('远程桌面：{name}', { name: model.activePeer.name })}
-                      aria-label={t('远程桌面')}
+                      variant={model.desktopSharingId ? 'danger' : 'ghost'}
+                      className={`shrink-0 ${model.desktopSharingId ? '' : 'text-neutral-80 hover:text-neutral-110'}`}
+                      disabled={model.desktopStopping}
+                      title={
+                        model.desktopSharingId
+                          ? t('停止远程桌面')
+                          : t('远程桌面：{name}', { name: model.activePeer.name })
+                      }
+                      aria-label={model.desktopSharingId ? t('停止远程桌面') : t('远程桌面')}
                       on:click={() => void openDesktop(model.activePeer.id)}
                     >
                       <span
-                        className="icon-[codicon--share-window] align-middle text-[13px] sm:mr-1"
+                        className={`${model.desktopSharingId ? 'icon-[codicon--debug-stop]' : 'icon-[codicon--share-window]'} align-middle text-[13px] sm:mr-1`}
                         aria-hidden="true"
                       />
-                      <span className="max-[760px]:hidden">{t('远程桌面')}</span>
+                      <span className="max-[760px]:hidden">
+                        {model.desktopSharingId ? t('停止远程桌面') : t('远程桌面')}
+                      </span>
                     </Button>
                   )}
                 {!browserMode &&
@@ -1291,7 +1330,6 @@ export default function App() {
             model.desktopOpen = false;
             model.desktopMinimized = false;
             model.desktopSessionId = '';
-            model.desktopSharingId = '';
             model.desktopPeerId = '';
           }}
         />

@@ -135,10 +135,10 @@ try {
   await run('Page.enable');
   await run('Runtime.enable');
   await run('Page.addScriptToEvaluateOnNewDocument', {
-    source: `(()=>{const ES=window.EventSource;window.EventSource=class extends ES{addEventListener(type,fn,...rest){if(type==='reload')return;return super.addEventListener(type,fn,...rest);}};const original=window.fetch;window.desktopCalls=[];window.requests=[];window.errors=[];window.addEventListener('error',e=>window.errors.push(String(e.error??e.message)));window.addEventListener('unhandledrejection',e=>window.errors.push(String(e.reason)));const ce=console.error;console.error=(...args)=>{window.errors.push(args.map(String));ce(...args);};window.sent=[];window.dimensionsReady=false;
+    source: `(()=>{const ES=window.EventSource;window.EventSource=class extends ES{addEventListener(type,fn,...rest){if(type==='reload')return;if(type==='desktop')window.emitDesktop=payload=>fn(new MessageEvent('desktop',{data:JSON.stringify(payload)}));return super.addEventListener(type,fn,...rest);}};const original=window.fetch;window.desktopCalls=[];window.requests=[];window.errors=[];window.addEventListener('error',e=>window.errors.push(String(e.error??e.message)));window.addEventListener('unhandledrejection',e=>window.errors.push(String(e.reason)));const ce=console.error;console.error=(...args)=>{window.errors.push(args.map(String));ce(...args);};window.sent=[];window.dimensionsReady=false;window.passiveSession=JSON.parse(sessionStorage.getItem('desktop-ui-passive')??'null');
  Object.defineProperties(HTMLVideoElement.prototype,{videoWidth:{get:()=>window.dimensionsReady?1440:0},videoHeight:{get:()=>window.dimensionsReady?900:0}});
- window.RTCPeerConnection=class{connectionState='new';localDescription={sdp:'mock-offer'};createDataChannel(){this.dc={readyState:'connecting',send:v=>window.sent.push(JSON.parse(v)),close(){}};return this.dc;}addTransceiver(){}async createOffer(){return {type:'offer',sdp:'mock-offer'};}async setLocalDescription(){}async setRemoteDescription(){this.connectionState='connected';this.onconnectionstatechange?.();this.dc.readyState='open';this.dc.onopen?.();this.ontrack?.({streams:[new MediaStream()]});}async addIceCandidate(){}close(){}};
-window.fetch=async(url,opts)=>{if(typeof url==='string'&&url.startsWith('/__rpc/desktop')){window.desktopCalls.push(url);if(opts?.body)window.requests.push({url,input:JSON.parse(opts.body).json});const name=url.slice('/__rpc/'.length);const data=name==='desktopState'?{sessions:[],resolutions:{[${JSON.stringify(peer.name)}]:'fit'}}:name==='desktopDisplay'?{supported:true,current:{width:2560,height:1600},modes:[{width:1280,height:800},{width:1440,height:900},{width:2560,height:1600}]}:name==='desktopRequest'?${JSON.stringify(session)}:name==='desktopOffer'?{sdp:'mock-answer',width:1440,height:900}:name==='desktopKeyboard'?{supported:false,active:false,events:[]}:name==='desktopStatus'?{supported:true,available:true,screenRecording:true,accessibility:true,inputMonitoring:true,screens:1,display:{width:2940,height:1912,logicalWidth:1470,logicalHeight:956,scale:2}}:{};return new Response(JSON.stringify({json:[null,data]}),{status:200});}return original(url,opts);};})()`,
+ window.RTCPeerConnection=class{connectionState='new';localDescription={sdp:'mock-offer'};createDataChannel(){this.dc={readyState:'connecting',send:v=>window.sent.push(JSON.parse(v)),close(){}};return this.dc;}addTransceiver(){}async createOffer(){return {type:'offer',sdp:'mock-offer'};}async setLocalDescription(){}async setRemoteDescription(){this.connectionState='connected';this.onconnectionstatechange?.();this.dc.readyState='open';this.dc.onopen?.();this.ontrack?.({streams:[new MediaStream()],receiver:{jitterBufferTarget:null,playoutDelayHint:null}});}async addIceCandidate(){}close(){}};
+window.fetch=async(url,opts)=>{if(typeof url==='string'&&url.startsWith('/__rpc/desktop')){window.desktopCalls.push(url);if(opts?.body)window.requests.push({url,input:JSON.parse(opts.body).json});const name=url.slice('/__rpc/'.length);if(name==='desktopStop'){if(window.failDesktopStop)return new Response(JSON.stringify({json:[{code:'PEER_UNREACHABLE'},null]}),{status:200});window.passiveSession=null;sessionStorage.removeItem('desktop-ui-passive');}const data=name==='desktopState'?{sessions:window.passiveSession?[window.passiveSession]:[],resolutions:{[${JSON.stringify(peer.name)}]:'fit'}}:name==='desktopDisplay'?{supported:true,current:{width:2560,height:1600},modes:[{width:1280,height:800},{width:1440,height:900},{width:2560,height:1600}]}:name==='desktopRequest'?${JSON.stringify(session)}:name==='desktopOffer'?{sdp:'mock-answer',width:1440,height:900}:name==='desktopKeyboard'?(window.nativeKeyboard?{supported:true,active:JSON.parse(opts.body).json.active,events:(window.nativeKeys??[]).splice(0)}:{supported:false,active:false,events:[]}):name==='desktopStatus'?{supported:true,available:true,screenRecording:false,accessibility:true,inputMonitoring:!window.denyKeyboard,screens:1,display:{width:2940,height:1912,logicalWidth:1470,logicalHeight:956,scale:2}}:{};return new Response(JSON.stringify({json:[null,data]}),{status:200});}return original(url,opts);};})()`,
   });
   const evaluate = async (expression) => {
     const r = await run('Runtime.evaluate', {
@@ -182,9 +182,21 @@ window.fetch=async(url,opts)=>{if(typeof url==='string'&&url.startsWith('/__rpc/
     `document.querySelector('select[aria-label="远端显示尺寸"]').value==='fit'`,
     'saved pair preference',
   );
+  await evaluate(
+    `(()=>{const e=document.querySelector('select[aria-label="帧率"]');if(!e)throw Error('Missing frame rate menu');e.value='60';e.dispatchEvent(new Event('change',{bubbles:true}));})()`,
+  );
   await pause(30);
   await evaluate(
-    `Array.from(document.querySelectorAll('button')).find(e=>e.innerText==='开始远程桌面').click()`,
+    `window.denyKeyboard=true;Array.from(document.querySelectorAll('button')).find(e=>e.innerText==='开始远程桌面').click()`,
+  );
+  await wait(
+    `Boolean(document.querySelector('[role="alert"]')?.textContent.includes('主控端缺少键鼠权限'))`,
+    'missing controller keyboard permission',
+  );
+  if (await evaluate(`window.requests.some(e=>e.url==='/__rpc/desktopRequest')`))
+    throw Error('Sent request before permissions were granted');
+  await evaluate(
+    `window.denyKeyboard=false;Array.from(document.querySelectorAll('button')).find(e=>e.innerText==='开始远程桌面').click()`,
   );
   await wait(
     `Boolean(document.querySelector('[aria-label="远程桌面画面"] video'))`,
@@ -207,11 +219,17 @@ window.fetch=async(url,opts)=>{if(typeof url==='string'&&url.startsWith('/__rpc/
   if (
     request?.input?.resolution?.width !== 2560 ||
     request?.input?.resolution?.height !== 1600 ||
+    request?.input?.fps !== 60 ||
     request?.input?.resolutionChoice !== 'fit'
   )
     throw Error('Resolution was not sent: ' + JSON.stringify(request));
   if (await evaluate(`document.body.innerText.includes('切换远端输入法')`))
     throw Error('Input-source button still shown');
+  const styles = await evaluate(
+    `(()=>{const close=document.querySelector('button[aria-label="关闭远程桌面"]'),pan=document.querySelector('button[aria-label="拖动画面"]'),zoom=document.querySelector('select[aria-label="缩放"]');return {close:getComputedStyle(close).backgroundColor,pan:getComputedStyle(pan).borderWidth,zoom:getComputedStyle(zoom).borderWidth}})()`,
+  );
+  if (styles.close !== 'rgb(179, 62, 62)' || styles.pan !== '0px' || styles.zoom !== '1px')
+    throw Error('Desktop action styles: ' + JSON.stringify(styles));
   const original = await evaluate(
     `(()=>{const r=document.querySelector('video').getBoundingClientRect(),d=document.querySelector('dialog').getBoundingClientRect();return {width:r.width,dialogWidth:d.width};})()`,
   );
@@ -313,6 +331,136 @@ window.fetch=async(url,opts)=>{if(typeof url==='string'&&url.startsWith('/__rpc/
   );
   await wait(`!document.fullscreenElement`, 'exit fullscreen from floating toolbar');
 
+  await evaluate(
+    `document.querySelector('dialog').dispatchEvent(new Event('cancel',{cancelable:true}));window.sent=[];document.querySelector('[aria-label="远程桌面画面"]').parentElement.requestFullscreen()`,
+  );
+  await wait(`Boolean(document.fullscreenElement)`, 'fullscreen before DOM Escape');
+  await evaluate(
+    `document.querySelector('[aria-label="远程桌面画面"]').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',code:'Escape',bubbles:true,cancelable:true}))`,
+  );
+  await wait(`!document.fullscreenElement`, 'DOM Escape exits fullscreen');
+  await evaluate(
+    `document.querySelector('[aria-label="远程桌面画面"]').dispatchEvent(new KeyboardEvent('keyup',{key:'Escape',code:'Escape',bubbles:true,cancelable:true}))`,
+  );
+  if (!(await evaluate(`Boolean(document.querySelector('dialog[open]'))`)))
+    throw Error('Escape closed the desktop dialog');
+  if ((await evaluate('window.requests')).some((r) => r.url === '/__rpc/desktopStop'))
+    throw Error('Escape stopped the desktop session');
+  if ((await evaluate('window.sent')).some((e) => e.t === 'key' && e.key === 53))
+    throw Error('Fullscreen Escape leaked to the remote');
+  await evaluate(`document.querySelector('button[aria-label="关闭远程桌面"]').click()`);
+  await wait(`!document.querySelector('dialog[open]')`, 'controller X stops and closes');
+  const controlled = {
+    ...session,
+    role: 'controlled',
+    sessionId: 'passive-ui-test',
+    phase: 'connected',
+  };
+  await evaluate(
+    `window.passiveSession=${JSON.stringify(controlled)};window.emitDesktop({type:'accepted',session:window.passiveSession})`,
+  );
+  await wait(
+    `Boolean(document.querySelector('button[aria-label="停止远程桌面"]'))`,
+    'passive stop entry',
+  );
+  if (await evaluate(`Boolean(document.querySelector('dialog[open]'))`))
+    throw Error('Passive acceptance opened a dialog');
+  if (
+    (await evaluate(
+      `getComputedStyle(document.querySelector('button[aria-label="停止远程桌面"]')).backgroundColor`,
+    )) !== 'rgb(179, 62, 62)'
+  )
+    throw Error('Passive stop entry is not red');
+  await evaluate(
+    `window.failDesktopStop=true;document.querySelector('button[aria-label="停止远程桌面"]').click()`,
+  );
+  await wait(
+    `window.requests.filter(r=>r.url==='/__rpc/desktopStop').length===2 && !document.querySelector('button[aria-label="停止远程桌面"]').disabled`,
+    'stop failure allows retry',
+  );
+  await evaluate(
+    `window.failDesktopStop=false;document.querySelector('button[aria-label="停止远程桌面"]').click()`,
+  );
+  await wait(
+    `!document.querySelector('button[aria-label="停止远程桌面"]') && Boolean(document.querySelector('button[aria-label="远程桌面"]'))`,
+    'stop restores desktop entry',
+  );
+  const stopCalls = (await evaluate('window.requests')).filter(
+    (r) => r.url === '/__rpc/desktopStop',
+  );
+  if (stopCalls.length !== 3 || stopCalls.some((r) => r.input.reason !== 'USER_STOPPED'))
+    throw Error('Unexpected stop requests: ' + JSON.stringify(stopCalls));
+  if (stopCalls.slice(1).some((r) => r.input.sessionId !== controlled.sessionId))
+    throw Error('Stopped the wrong passive session');
+  await evaluate(
+    `sessionStorage.setItem('desktop-ui-passive',${JSON.stringify(JSON.stringify(controlled))})`,
+  );
+  await run('Page.reload');
+  await wait(
+    `Boolean(document.querySelector('button[aria-label="停止远程桌面"]'))`,
+    'passive resume entry',
+  );
+  if (await evaluate(`Boolean(document.querySelector('dialog[open]'))`))
+    throw Error('Passive resume opened a dialog');
+  await evaluate(
+    `window.passiveSession=null;window.emitDesktop({type:'ended',sessionId:${JSON.stringify(controlled.sessionId)},reason:'STOPPED'})`,
+  );
+  await wait(
+    `!document.querySelector('button[aria-label="停止远程桌面"]')`,
+    'remote end clears stop entry',
+  );
+  console.log(
+    'PASS: red X, borderless pan, bordered zoom, passive accept/resume without dialogs, stop/retry/end',
+  );
+  await evaluate(
+    `window.nativeKeyboard=true;window.nativeKeys=[];window.dimensionsReady=true;document.querySelector('button[aria-label="远程桌面"]').click()`,
+  );
+  await wait(
+    `Boolean(document.querySelector('select[aria-label="帧率"]'))`,
+    'new session settings',
+  );
+  await evaluate(
+    `Array.from(document.querySelectorAll('button')).find(e=>e.innerText==='开始远程桌面').click()`,
+  );
+  await wait(
+    `Boolean(document.querySelector('[aria-label="远程桌面画面"] video'))`,
+    'native keyboard stage',
+  );
+  await run('Page.bringToFront');
+  await evaluate(
+    `document.querySelector('video').dispatchEvent(new Event('loadedmetadata'));document.querySelector('[aria-label="远程桌面画面"]').focus()`,
+  );
+  await wait(
+    `window.requests.some(r=>r.url==='/__rpc/desktopKeyboard'&&r.input.active)`,
+    'native keyboard focused',
+  );
+  await evaluate(
+    `document.querySelector('[aria-label="远程桌面画面"]').parentElement.requestFullscreen()`,
+  );
+  await wait(`Boolean(document.fullscreenElement)`, 'fullscreen before native Escape');
+  await evaluate(
+    `window.sent=[];window.nativeKeys.push({t:'key',key:53,down:true,flags:0},{t:'key',key:53,down:false,flags:0})`,
+  );
+  await wait(`!document.fullscreenElement`, 'native Escape exits fullscreen');
+  if ((await evaluate('window.sent')).some((e) => e.t === 'key' && e.key === 53))
+    throw Error('Native fullscreen Escape leaked to the remote');
+  await evaluate(
+    `document.querySelector('dialog').dispatchEvent(new Event('cancel',{cancelable:true}));window.nativeKeys.push({t:'key',key:53,down:true,flags:0},{t:'key',key:53,down:false,flags:0})`,
+  );
+  await wait(
+    `window.sent.filter(e=>e.t==='key'&&e.key===53).length===2`,
+    'native Escape forwarded outside fullscreen',
+  );
+  if (
+    !(await evaluate(`Boolean(document.querySelector('dialog[open]'))`)) ||
+    (await evaluate('window.requests')).some((r) => r.url === '/__rpc/desktopStop')
+  )
+    throw Error('Native Escape closed or stopped the session');
+  await evaluate(`document.querySelector('button[aria-label="关闭远程桌面"]').click()`);
+  await wait(`!document.querySelector('dialog[open]')`, 'native session closes with X');
+  console.log(
+    'PASS: DOM/native Escape exit fullscreen without stopping; normal Escape still reaches remote',
+  );
   await pause(80);
   console.log(
     'PASS: resolution menu and request, fill/fullscreen, zoom/pan, accurate clicks and removed source button',

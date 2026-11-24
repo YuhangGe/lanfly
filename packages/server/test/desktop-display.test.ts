@@ -1,5 +1,6 @@
 import {
   desktopPeerRequestSchema,
+  desktopPermissionError,
   desktopRequestInput,
   fitDesktopResolution,
   type DesktopDisplayModes,
@@ -16,6 +17,14 @@ import { desktopViewportFrame } from '../../webui/src/service/desktop-viewport';
 import { DataStore } from '../src/data';
 import { DesktopService } from '../src/desktop/service';
 
+const readyPermissions = {
+  supported: true,
+  available: true,
+  screenRecording: true,
+  accessibility: true,
+  inputMonitoring: true,
+  screens: 1,
+};
 const modes: DesktopDisplayModes = {
   supported: true,
   current: { width: 2560, height: 1600 },
@@ -74,16 +83,21 @@ describe('remote display size and viewport', () => {
         input: { status: () => ({ enabled: false }) },
         events: { broadcast: () => undefined },
         remote: {
+          desktopDisplay: async () => ({ ...modes, permissions: readyPermissions }),
           desktopRequest: async () => ({
             from: { id: peerId },
             token: 'a'.repeat(40),
+            control: true,
             width: 1920,
             height: 1080,
             screenRecording: true,
           }),
         },
       } as unknown as Application;
-      const service = new DesktopService(app, () => undefined);
+      const service = new DesktopService(
+        app,
+        () => ({ desktopStatus: () => JSON.stringify(readyPermissions) }) as NativeDesktop,
+      );
       services.push(service);
       return { service, owner, peerId };
     };
@@ -147,7 +161,7 @@ describe('remote display size and viewport', () => {
   it('forwards supported choices only when starting capture and restores on stop/failure', async () => {
     const from = { id: 'peer', name: 'Peer', port: 8087, roomId: '123456', version: '0.3.0' };
     const calls: string[] = [];
-    let config: { resolution?: { width: number; height: number } } | undefined;
+    let config: { fps?: number; resolution?: { width: number; height: number } } | undefined;
     const native = {
       desktopStatus: () =>
         JSON.stringify({
@@ -199,7 +213,7 @@ describe('remote display size and viewport', () => {
     expect(calls).toEqual([]);
     const accepted = (await service.handlePeer(
       'request',
-      request('s1', { width: 1280, height: 800 }),
+      { ...request('s1', { width: 1280, height: 800 }), fps: 60 },
       '127.0.0.1',
       'peer',
       undefined,
@@ -213,6 +227,7 @@ describe('remote display size and viewport', () => {
       accepted.token,
     );
     expect(config?.resolution).toEqual({ width: 1280, height: 800 });
+    expect(config?.fps).toBe(60);
     await service.handlePeer(
       'stop',
       { sessionId: 's1', from },
@@ -241,7 +256,161 @@ describe('remote display size and viewport', () => {
       ),
     ).rejects.toMatchObject({ code: 'DESKTOP_SDP_INVALID' });
     expect(config?.resolution).toBeUndefined();
+    expect(config?.fps).toBe(30);
     expect(calls).toEqual(['start', 'restore', 'start', 'restore']);
     await service.stop();
+  });
+});
+
+describe('desktop permission preflight', () => {
+  it('requires controller keyboard permissions but not screen recording; controlled input monitoring is unnecessary', () => {
+    expect(
+      desktopPermissionError({ ...readyPermissions, screenRecording: false }, 'controller'),
+    ).toBeUndefined();
+    expect(
+      desktopPermissionError({ ...readyPermissions, inputMonitoring: false }, 'controlled'),
+    ).toBeUndefined();
+    expect(
+      desktopPermissionError({ ...readyPermissions, accessibility: false }, 'controller'),
+    ).toBe('DESKTOP_CONTROLLER_INPUT_PERMISSION');
+    expect(
+      desktopPermissionError({ ...readyPermissions, inputMonitoring: false }, 'controller'),
+    ).toBe('DESKTOP_CONTROLLER_INPUT_PERMISSION');
+    expect(
+      desktopPermissionError({ ...readyPermissions, screenRecording: false }, 'controlled'),
+    ).toBe('DESKTOP_REMOTE_SCREEN_PERMISSION');
+    expect(
+      desktopPermissionError({ ...readyPermissions, accessibility: false }, 'controlled'),
+    ).toBe('DESKTOP_REMOTE_INPUT_PERMISSION');
+    expect(desktopPermissionError(undefined, 'controlled')).toBe('DESKTOP_PEER_UPGRADE_REQUIRED');
+  });
+
+  it('does not send a desktop request or create a session before both sides have permission', async () => {
+    let local = { ...readyPermissions, screenRecording: false, inputMonitoring: false };
+    let remote = { ...readyPermissions, accessibility: false };
+    let requests = 0,
+      queries = 0;
+    const app = {
+      identity: { id: 'host', name: 'Host', info: { id: 'host' } },
+      network: {
+        peers: () => [{ id: 'peer', name: 'Peer', host: '127.0.0.1', port: 8087, online: true }],
+        browsers: new Map(),
+      },
+      state: { get: () => undefined, set: async () => undefined },
+      input: { status: () => ({ enabled: false }) },
+      events: { broadcast: () => undefined },
+      remote: {
+        desktopDisplay: async () => {
+          queries++;
+          return { ...modes, permissions: remote };
+        },
+        desktopRequest: async () => {
+          requests++;
+          return {
+            from: { id: 'peer' },
+            token: 'a'.repeat(40),
+            control: true,
+            screenRecording: true,
+            width: 100,
+            height: 100,
+          };
+        },
+      },
+    } as unknown as Application;
+    const service = new DesktopService(
+      app,
+      () => ({ desktopStatus: () => JSON.stringify(local) }) as NativeDesktop,
+    );
+    try {
+      await expect(service.request('browser-device', { peerId: 'peer' })).rejects.toMatchObject({
+        code: 'DESKTOP_LOCAL_ONLY',
+      });
+      await expect(service.request('host', { peerId: 'peer' })).rejects.toMatchObject({
+        code: 'DESKTOP_CONTROLLER_INPUT_PERMISSION',
+      });
+      expect(queries).toBe(0);
+      local = { ...local, inputMonitoring: true };
+      await expect(service.request('host', { peerId: 'peer' })).rejects.toMatchObject({
+        code: 'DESKTOP_REMOTE_INPUT_PERMISSION',
+      });
+      remote = { ...remote, accessibility: true, screenRecording: false };
+      await expect(service.request('host', { peerId: 'peer' })).rejects.toMatchObject({
+        code: 'DESKTOP_REMOTE_SCREEN_PERMISSION',
+      });
+      expect(requests).toBe(0);
+      expect(service.hasActive()).toBe(false);
+      remote = { ...remote, screenRecording: true };
+      expect((await service.request('host', { peerId: 'peer' })).control).toBe(true);
+      expect(requests).toBe(1);
+    } finally {
+      await service.stop();
+    }
+  });
+
+  it('rejects incoming requests without permissions and rechecks them before starting capture', async () => {
+    const from = { id: 'peer', name: 'Peer', port: 8087, roomId: '123456', version: '0.3.0' };
+    let status = { ...readyPermissions, accessibility: false };
+    let starts = 0,
+      accepted = 0;
+    const app = {
+      identity: { id: 'host', roomId: '123456', info: { id: 'host' } },
+      peers: new Map([['peer', { host: '127.0.0.1' }]]),
+      input: { status: () => ({ enabled: false }) },
+      events: {
+        broadcast: (_owner: string, event: { type: string }) => {
+          if (event?.type === 'accepted') accepted++;
+        },
+      },
+    } as unknown as Application;
+    const service = new DesktopService(
+      app,
+      () =>
+        ({
+          desktopStatus: () => JSON.stringify(status),
+          desktopStart: () => {
+            starts++;
+            return '{}';
+          },
+        }) as unknown as NativeDesktop,
+    );
+    const request = { from, sessionId: 'test', control: true };
+    try {
+      await expect(
+        service.handlePeer('request', request, '127.0.0.1', 'peer', undefined),
+      ).rejects.toMatchObject({ code: 'DESKTOP_REMOTE_INPUT_PERMISSION' });
+      expect(service.hasActive()).toBe(false);
+      expect(accepted).toBe(0);
+      status = { ...status, accessibility: true };
+      await expect(
+        service.handlePeer(
+          'request',
+          { ...request, control: false },
+          '127.0.0.1',
+          'peer',
+          undefined,
+        ),
+      ).rejects.toMatchObject({ code: 'DESKTOP_CONTROL_REQUIRED' });
+      const result = (await service.handlePeer(
+        'request',
+        request,
+        '127.0.0.1',
+        'peer',
+        undefined,
+      )) as { token: string };
+      status = { ...status, screenRecording: false };
+      await expect(
+        service.handlePeer(
+          'offer',
+          { from, sessionId: 'test', sdp: 'offer' },
+          '127.0.0.1',
+          'peer',
+          result.token,
+        ),
+      ).rejects.toMatchObject({ code: 'DESKTOP_REMOTE_SCREEN_PERMISSION' });
+      expect(starts).toBe(0);
+      expect(service.hasActive()).toBe(false);
+    } finally {
+      await service.stop();
+    }
   });
 });

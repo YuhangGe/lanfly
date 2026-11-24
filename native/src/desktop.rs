@@ -11,7 +11,6 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use async_trait::async_trait;
 
 use rtc::interceptor::{Interceptor, Registry, Slot};
-use rtc::media::Sample;
 use rtc::media_stream::MediaStreamTrack;
 use rtc::peer_connection::configuration::RTCConfigurationBuilder;
 use rtc::peer_connection::configuration::interceptor_registry::register_default_interceptors;
@@ -22,15 +21,17 @@ use rtc::peer_connection::transport::RTCDtlsRole;
 use rtc::peer_connection::transport::RTCIceCandidateInit;
 use rtc::rtcp::payload_feedbacks::full_intra_request::FullIntraRequest;
 use rtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
+use rtc::rtp::codec::h264::H264Payloader;
+use rtc::rtp::packetizer::Packetizer;
 use rtc::rtp_transceiver::PayloadType;
 use rtc::rtp_transceiver::rtp_sender::{
     RTCPFeedback, RTCRtpCodec, RTCRtpCodecParameters, RTCRtpCodingParameters,
-    RTCRtpEncodingParameters, RtpCodecKind,
+    RTCRtpEncodingParameters, RTCRtpHeaderExtensionCapability, RtpCodecKind,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
 use webrtc::data_channel::{DataChannel, DataChannelEvent};
-use webrtc::media_stream::track_local::static_sample::TrackLocalStaticSample;
+use webrtc::media_stream::track_local::static_rtp::TrackLocalStaticRTP;
 use webrtc::media_stream::track_local::{TrackLocal, TrackLocalEvent};
 use webrtc::peer_connection::{
     PeerConnection, PeerConnectionBuilder, PeerConnectionEventHandler, RTCIceTransportPolicy,
@@ -46,6 +47,7 @@ use crate::desktop_input;
 
 const MAX_QUEUED_EVENTS: usize = 256;
 const H264_PAYLOAD_TYPE: PayloadType = 102;
+const PLAYOUT_DELAY_URI: &str = "http://www.webrtc.org/experiments/rtp-hdrext/playout-delay";
 
 #[derive(Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
@@ -229,6 +231,21 @@ impl Interceptor for KeyframeFeedback {
     fn unbind_remote_stream(&mut self, _info: &rtc::interceptor::StreamInfo) {}
 }
 
+struct VideoClock {
+    origin: Option<f64>,
+    base: u32,
+}
+impl VideoClock {
+    fn new(base: u32) -> Self {
+        Self { origin: None, base }
+    }
+    fn timestamp(&mut self, pts: f64) -> u32 {
+        let origin = *self.origin.get_or_insert(pts);
+        let ticks = ((pts - origin).max(0.0) * 90_000.0).round() as u64;
+        self.base.wrapping_add(ticks as u32)
+    }
+}
+
 struct Session {
     id: String,
     runtime: Arc<tokio::runtime::Runtime>,
@@ -239,15 +256,17 @@ struct Session {
     capture: Mutex<Option<Capture>>,
     encoder: Mutex<Option<Encoder>>,
     pc: tokio::sync::Mutex<Option<Box<dyn PeerConnection>>>,
-    track: Arc<TrackLocalStaticSample>,
+    track: Arc<TrackLocalStaticRTP>,
     sender: Arc<dyn RtpSender>,
     ssrc: u32,
     payload_type: Arc<AtomicU8>,
+    playout_extension: Arc<AtomicU8>,
     encoded_queue: Arc<FrameQueue>,
     streaming: AtomicBool,
     stopped: AtomicBool,
     width: u32,
     height: u32,
+    fps: u32,
     bitrate: AtomicU64,
     display_lease: Mutex<Option<crate::display_mode::DisplayLease>>,
 }
@@ -280,6 +299,7 @@ impl Session {
                 &answer.sdp,
                 self.width,
                 self.height,
+                self.fps,
                 self.bitrate.load(Ordering::Relaxed) as u32,
             );
             Ok::<_, String>(answer)
@@ -295,6 +315,15 @@ impl Session {
             .map(|codec| codec.payload_type)
             .ok_or_else(|| "DESKTOP_CODEC_FAILED".to_owned())?;
         self.payload_type.store(payload_type, Ordering::Release);
+        // Track bindings can retain pre-negotiation extension IDs. Use the sender's
+        // negotiated parameters directly when building packets instead.
+        let playout_id = parameters
+            .rtp_parameters
+            .header_extensions
+            .iter()
+            .find(|extension| extension.uri == PLAYOUT_DELAY_URI)
+            .map_or(0, |extension| extension.id as u8);
+        self.playout_extension.store(playout_id, Ordering::Release);
         self.force_keyframe.store(true, Ordering::Release);
         self.start_streaming();
         serde_json::to_string(&answer).map_err(|_| "DESKTOP_SDP_INVALID".to_owned())
@@ -346,9 +375,20 @@ impl Session {
         }));
         let ssrc = self.ssrc;
         let payload_type = self.payload_type.clone();
+        let playout_extension = self.playout_extension.clone();
         let running = self.running.clone();
         self.runtime.spawn(Box::pin(async move {
             let mut waiting_for_keyframe = true;
+            let mut packetizer = rtc::rtp::packetizer::new_packetizer(
+                Instant::now(),
+                1200,
+                0,
+                ssrc,
+                Box::new(H264Payloader::default()),
+                Box::new(rtc::rtp::sequence::new_random_sequencer()),
+                90_000,
+            );
+            let mut clock = VideoClock::new(new_ssrc());
             while running.load(Ordering::Acquire) {
                 if !connected.load(Ordering::Acquire) {
                     // The transport is not writable yet. Do not consume the queue: the first
@@ -369,17 +409,25 @@ impl Session {
                 if payload_type == 0 {
                     continue;
                 }
-                let sample = Sample {
-                    data: frame.data,
-                    duration: frame.duration,
-                    timestamp: Instant::now(),
-                    packet_timestamp: 0,
-                    prev_dropped_packets: 0,
-                    prev_padding_packets: 0,
+                // Timestamp each frame from its own capture PTS, including idle gaps
+                // and frames skipped before transmission. Sample-duration packetization
+                // shifts variable frame intervals by one frame and inflates receiver jitter.
+                let timestamp = clock.timestamp(frame.pts_seconds);
+                let Ok(packets) = packetizer.packetize(Instant::now(), &frame.data, 0) else {
+                    continue;
                 };
-                // Before the connection becomes writable write_sample returns an error; frames
-                // are intentionally dropped rather than buffered so latency never accumulates.
-                let _ = track.write_sample(ssrc, payload_type, &sample, &[]).await;
+                let playout_id = playout_extension.load(Ordering::Acquire);
+                for mut packet in packets {
+                    packet.header.payload_type = payload_type;
+                    packet.header.timestamp = timestamp;
+                    if playout_id != 0 {
+                        // Two 12-bit delays in 10ms units: min=0, max=5 (50ms).
+                        let _ = packet
+                            .header
+                            .set_extension(playout_id, bytes::Bytes::from_static(&[0, 0, 5]));
+                    }
+                    let _ = track.write_rtp(packet).await;
+                }
             }
         }));
     }
@@ -499,17 +547,23 @@ fn local_socket_address(value: Option<&str>) -> String {
 /// The browser offer usually advertises a low H.264 level, but the actual stream can be a
 /// 2940x1912 Retina capture at up to 32 Mbps. Rewrite the fmtp level so Chrome configures its
 /// decoder for the real frame size and bitrate instead of rejecting or downscaling the stream.
-fn advertise_h264_level(sdp: &str, width: u32, height: u32, bitrate: u32) -> String {
+fn advertise_h264_level(sdp: &str, width: u32, height: u32, fps: u32, bitrate: u32) -> String {
     const KEY: &str = "profile-level-id=";
     let macroblocks = width.div_ceil(16) * height.div_ceil(16);
-    let level = if macroblocks <= 8_192 && bitrate <= 14_000_000 {
+    let macroblocks_per_second = u64::from(macroblocks) * u64::from(fps);
+    let level = if macroblocks <= 8_192
+        && macroblocks_per_second <= 245_760
+        && bitrate <= 14_000_000
+    {
         "42e028" // Level 4.0
-    } else if macroblocks <= 8_704 && bitrate <= 20_000_000 {
+    } else if macroblocks <= 8_704 && macroblocks_per_second <= 522_240 && bitrate <= 20_000_000 {
         "42e02a" // Level 4.2
-    } else if macroblocks <= 22_080 && bitrate <= 50_000_000 {
+    } else if macroblocks <= 22_080 && macroblocks_per_second <= 589_824 && bitrate <= 50_000_000 {
         "42e032" // Level 5.0
-    } else {
+    } else if macroblocks <= 36_864 && macroblocks_per_second <= 983_040 {
         "42e033" // Level 5.1
+    } else {
+        "42e034" // Level 5.2 (4K60)
     };
     let mut output = String::with_capacity(sdp.len());
     let mut rest = sdp;
@@ -558,7 +612,7 @@ fn h264_codec() -> RTCRtpCodecParameters {
 
 type PeerParts = (
     Box<dyn PeerConnection>,
-    Arc<TrackLocalStaticSample>,
+    Arc<TrackLocalStaticRTP>,
     Arc<dyn RtpSender>,
     u32,
 );
@@ -575,6 +629,15 @@ fn build_peer(
     media
         .register_codec(codec.clone(), RtpCodecKind::Video)
         .map_err(|error| format!("DESKTOP_CODEC_FAILED: {error}"))?;
+    media
+        .register_header_extension(
+            RTCRtpHeaderExtensionCapability {
+                uri: PLAYOUT_DELAY_URI.to_owned(),
+            },
+            RtpCodecKind::Video,
+            None,
+        )
+        .map_err(|error| format!("DESKTOP_CODEC_FAILED: {error}"))?;
     let registry = register_default_interceptors(Registry::new(), &mut media)
         .map_err(|error| format!("DESKTOP_WEBRTC_BUILD: {error}"))?;
     let registry = registry.with(Slot::from(14_000), KeyframeFeedback::new());
@@ -585,26 +648,20 @@ fn build_peer(
         .build();
     let udp_address = local_socket_address(local_address);
     let runtime_adapter: Arc<dyn Runtime> = Arc::new(TokioRuntime);
-    let track = Arc::new(
-        TrackLocalStaticSample::new(
-            Instant::now(),
-            MediaStreamTrack::new(
-                format!("lanfly-desktop-stream-{session_id}"),
-                format!("lanfly-desktop-track-{session_id}"),
-                "lanfly desktop".to_owned(),
-                RtpCodecKind::Video,
-                vec![RTCRtpEncodingParameters {
-                    rtp_coding_parameters: RTCRtpCodingParameters {
-                        ssrc: Some(track_ssrc),
-                        ..Default::default()
-                    },
-                    codec: codec.rtp_codec.clone(),
-                    ..Default::default()
-                }],
-            ),
-        )
-        .map_err(|error| format!("DESKTOP_CODEC_FAILED: {error}"))?,
-    );
+    let track = Arc::new(TrackLocalStaticRTP::new(MediaStreamTrack::new(
+        format!("lanfly-desktop-stream-{session_id}"),
+        format!("lanfly-desktop-track-{session_id}"),
+        "lanfly desktop".to_owned(),
+        RtpCodecKind::Video,
+        vec![RTCRtpEncodingParameters {
+            rtp_coding_parameters: RTCRtpCodingParameters {
+                ssrc: Some(track_ssrc),
+                ..Default::default()
+            },
+            codec: codec.rtp_codec.clone(),
+            ..Default::default()
+        }],
+    )));
     runtime
         .block_on(async {
             let pc = PeerConnectionBuilder::new()
@@ -690,10 +747,10 @@ pub fn start(session_id: &str, config_json: &str) -> Result<Value, String> {
     }
 
     let display_lease = crate::display_mode::DisplayLease::apply(config.resolution)?;
-    let (capture_tx, capture_rx) = crossbeam_channel::bounded::<CapturedFrame>(2);
+    let (capture_tx, capture_rx) = crossbeam_channel::bounded::<CapturedFrame>(1);
     let mut capture = Capture::start(config.max_width, config.max_height, config.fps, capture_tx)?;
     let force_keyframe = Arc::new(AtomicBool::new(true));
-    let encoded_queue = FrameQueue::new(3, force_keyframe.clone());
+    let encoded_queue = FrameQueue::new(2, force_keyframe.clone());
     let mut encoder = match Encoder::start(
         capture.width(),
         capture.height(),
@@ -763,11 +820,13 @@ pub fn start(session_id: &str, config_json: &str) -> Result<Value, String> {
         sender,
         ssrc,
         payload_type: Arc::new(AtomicU8::new(0)),
+        playout_extension: Arc::new(AtomicU8::new(0)),
         encoded_queue,
         streaming: AtomicBool::new(false),
         stopped: AtomicBool::new(false),
         width: actual_width,
         height: actual_height,
+        fps: config.fps,
         bitrate: AtomicU64::new(config.bitrate as u64),
         display_lease: Mutex::new(display_lease),
     });
@@ -859,6 +918,17 @@ mod tests {
     use super::*;
 
     #[test]
+    fn video_clock_preserves_idle_gaps_skipped_frames_and_wraparound() {
+        let mut clock = VideoClock::new(u32::MAX - 100);
+        assert_eq!(clock.timestamp(100.0), u32::MAX - 100);
+        assert_eq!(clock.timestamp(100.0 + 1.0 / 30.0), 2_899);
+        // A static desktop may not produce a frame for seconds. The changed frame
+        // must carry that full gap immediately, not on the following frame.
+        assert_eq!(clock.timestamp(103.0), 269_899);
+        assert_eq!(clock.timestamp(103.1), 278_899);
+    }
+
+    #[test]
     fn h264_codec_advertises_constrained_baseline_and_pli() {
         let codec = h264_codec();
         assert!(
@@ -881,15 +951,21 @@ mod tests {
         let sdp =
             "a=fmtp:108 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f\r\n";
         assert!(
-            advertise_h264_level(sdp, 1920, 1080, 4_000_000).contains("profile-level-id=42e028")
+            advertise_h264_level(sdp, 1920, 1080, 30, 4_000_000)
+                .contains("profile-level-id=42e028")
         );
         assert!(
-            advertise_h264_level(sdp, 2940, 1912, 16_000_000).contains("profile-level-id=42e032")
+            advertise_h264_level(sdp, 2940, 1912, 30, 16_000_000)
+                .contains("profile-level-id=42e033")
         );
         assert!(
-            advertise_h264_level(sdp, 3840, 2160, 32_000_000).contains("profile-level-id=42e033")
+            advertise_h264_level(sdp, 3840, 2160, 30, 32_000_000)
+                .contains("profile-level-id=42e033")
         );
-        assert!(advertise_h264_level("no fmtp here", 1920, 1080, 4_000_000).eq("no fmtp here"));
+        assert!(advertise_h264_level(sdp, 1920, 1080, 60, 4_000_000).contains("42e02a"));
+        assert!(advertise_h264_level(sdp, 2560, 1440, 60, 4_000_000).contains("42e033"));
+        assert!(advertise_h264_level(sdp, 3840, 2160, 60, 4_000_000).contains("42e034"));
+        assert!(advertise_h264_level("no fmtp here", 1920, 1080, 30, 4_000_000).eq("no fmtp here"));
     }
 
     #[test]

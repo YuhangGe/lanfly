@@ -68,6 +68,8 @@ unsafe extern "C" {
 
 #[link(name = "VideoToolbox", kind = "framework")]
 unsafe extern "C" {
+    static kVTVideoEncoderSpecification_EnableLowLatencyRateControl: CFStringRef;
+    static kVTCompressionPropertyKey_MaxFrameDelayCount: CFStringRef;
     static kVTCompressionPropertyKey_RealTime: CFStringRef;
     static kVTCompressionPropertyKey_ProfileLevel: CFStringRef;
     static kVTCompressionPropertyKey_AllowFrameReordering: CFStringRef;
@@ -123,12 +125,13 @@ type VTCompressionOutputCallback = extern "C" fn(
 
 pub struct EncodedFrame {
     pub data: Bytes,
-    pub duration: Duration,
+    pub pts_seconds: f64,
     pub keyframe: bool,
+    pub encoded_at: Instant,
 }
 
-/// A tiny real-time frame queue. When full it drops the oldest frame, so a newly produced
-/// keyframe can always replace stale P-frames instead of being discarded.
+/// A bounded real-time queue. Expiry/overflow discards a whole GOP and waits for a
+/// new keyframe, so neither stale frames nor broken P-frame references are sent.
 pub struct FrameQueue {
     inner: Mutex<FrameQueueInner>,
     ready: tokio::sync::Notify,
@@ -140,6 +143,7 @@ pub struct FrameQueue {
 struct FrameQueueInner {
     frames: VecDeque<EncodedFrame>,
     closed: bool,
+    waiting_for_keyframe: bool,
 }
 
 impl FrameQueue {
@@ -148,6 +152,7 @@ impl FrameQueue {
             inner: Mutex::new(FrameQueueInner {
                 frames: VecDeque::new(),
                 closed: false,
+                waiting_for_keyframe: false,
             }),
             ready: tokio::sync::Notify::new(),
             capacity: capacity.max(1),
@@ -161,16 +166,24 @@ impl FrameQueue {
         if inner.closed {
             return;
         }
-        if inner.frames.len() >= self.capacity {
+        let stale = inner
+            .frames
+            .front()
+            .is_some_and(|frame| frame.encoded_at.elapsed() > Duration::from_millis(50));
+        if inner.frames.len() >= self.capacity || stale {
             // Dropping arbitrary P-frames would break the H.264 reference chain and force the
             // browser into a PLI/keyframe loop. Reset the GOP instead and wait for the encoder
             // to produce a fresh keyframe.
             inner.frames.clear();
             self.dropped.fetch_add(1, Ordering::Relaxed);
             self.force_keyframe.store(true, Ordering::Release);
+            inner.waiting_for_keyframe = true;
+        }
+        if inner.waiting_for_keyframe {
             if !frame.keyframe {
                 return;
             }
+            inner.waiting_for_keyframe = false;
         }
         inner.frames.push_back(frame);
         self.ready.notify_one();
@@ -181,6 +194,21 @@ impl FrameQueue {
         inner.closed = true;
         self.ready.notify_waiters();
     }
+
+    fn pop(&self, inner: &mut FrameQueueInner) -> Option<EncodedFrame> {
+        if inner
+            .frames
+            .front()
+            .is_some_and(|frame| frame.encoded_at.elapsed() > Duration::from_millis(50))
+        {
+            inner.frames.clear();
+            inner.waiting_for_keyframe = true;
+            self.dropped.fetch_add(1, Ordering::Relaxed);
+            self.force_keyframe.store(true, Ordering::Release);
+            return None;
+        }
+        inner.frames.pop_front()
+    }
 }
 
 impl FrameQueue {
@@ -190,7 +218,7 @@ impl FrameQueue {
         loop {
             {
                 let mut inner = self.inner.lock().unwrap();
-                if let Some(frame) = inner.frames.pop_front() {
+                if let Some(frame) = self.pop(&mut inner) {
                     return Some(frame);
                 }
                 if inner.closed {
@@ -201,7 +229,7 @@ impl FrameQueue {
             tokio::pin!(notified);
             {
                 let mut inner = self.inner.lock().unwrap();
-                if let Some(frame) = inner.frames.pop_front() {
+                if let Some(frame) = self.pop(&mut inner) {
                     return Some(frame);
                 }
                 if inner.closed {
@@ -219,7 +247,6 @@ impl FrameQueue {
 struct Shared {
     session: Mutex<VTCompressionSessionRef>,
     output: Arc<FrameQueue>,
-    last_pts: Mutex<f64>,
     force_keyframe: Arc<AtomicBool>,
     bitrate: AtomicU64,
     running: AtomicBool,
@@ -404,22 +431,11 @@ extern "C" fn output_callback(
     } else {
         0.0
     };
-    let mut last = shared.last_pts.lock().unwrap();
-    let mut duration = if *last > 0.0 && pts_seconds > *last {
-        Duration::from_secs_f64((pts_seconds - *last).min(0.5))
-    } else {
-        Duration::from_micros(1_000_000 / shared.fps.max(1) as u64)
-    };
-    if duration < Duration::from_millis(1) {
-        duration = Duration::from_millis(1);
-    }
-    *last = pts_seconds;
-    drop(last);
-
     shared.output.push(EncodedFrame {
         data: Bytes::from(data),
-        duration,
+        pts_seconds,
         keyframe,
+        encoded_at: Instant::now(),
     });
 }
 
@@ -428,12 +444,34 @@ fn encode_loop(shared: Arc<Shared>, frames: Receiver<CapturedFrame>) {
     let tolerance = target_interval.mul_f32(0.75);
     let mut last_pts: Option<f64> = None;
     let mut last_at = Instant::now() - target_interval;
+    let mut cached: Option<CapturedFrame> = None;
     while shared.running.load(Ordering::Relaxed) {
-        let frame = match frames.recv_timeout(Duration::from_millis(50)) {
+        let mut frame = match frames.recv_timeout(Duration::from_millis(50)) {
             Ok(frame) => frame,
-            Err(crossbeam_channel::RecvTimeoutError::Timeout) => continue,
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                // ScreenCaptureKit stops producing frames on an unchanged desktop.
+                // Re-encode the retained image when ICE/PLI requests a keyframe,
+                // otherwise startup/recovery could wait indefinitely for a screen change.
+                if !shared.force_keyframe.load(Ordering::Acquire) {
+                    continue;
+                }
+                let Some(mut frame) = cached.take() else {
+                    continue;
+                };
+                frame.pts_seconds += frame.captured_at.elapsed().as_secs_f64();
+                frame.captured_at = Instant::now();
+                frame
+            }
             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
         };
+        // Drop raw frames before encoding, where skipping cannot damage a GOP.
+        while let Ok(newer) = frames.try_recv() {
+            frame = newer;
+        }
+        if frame.captured_at.elapsed() > Duration::from_millis(50) {
+            cached = Some(frame);
+            continue;
+        }
         // ScreenCaptureKit can deliver display-refresh frames even when the configured
         // minimum interval is 1/fps. Encode at the target rate so P-frames are not dropped
         // after encoding (which would break the H.264 reference chain).
@@ -444,6 +482,7 @@ fn encode_loop(shared: Arc<Shared>, frames: Receiver<CapturedFrame>) {
             _ => last_at.elapsed() >= tolerance,
         };
         if !due {
+            cached = Some(frame);
             continue;
         }
         last_pts = Some(frame.pts_seconds);
@@ -472,7 +511,7 @@ fn encode_loop(shared: Arc<Shared>, frames: Receiver<CapturedFrame>) {
         let session = *shared.session.lock().unwrap();
         if !session.is_null() {
             let mut info_flags = 0_u32;
-            let status = unsafe {
+            let mut status = unsafe {
                 VTCompressionSessionEncodeFrame(
                     session,
                     frame.buffer(),
@@ -486,12 +525,18 @@ fn encode_loop(shared: Arc<Shared>, frames: Receiver<CapturedFrame>) {
                     &mut info_flags,
                 )
             };
+            if status == 0 {
+                // Do not let the hardware wait for future frames on a static desktop.
+                // Only this encoder worker waits; capture and WebRTC stay asynchronous.
+                // The one-frame raw queue bounds backlog while encoding completes.
+                status = unsafe { VTCompressionSessionCompleteFrames(session, pts) };
+            }
             if status != 0 {
                 push_error(&shared, format!("DESKTOP_ENCODE_FAILED_{status}"));
             }
         }
-        // VTCompressionSessionEncodeFrame retains the buffer for as long as it needs it.
-        drop(frame);
+        // Retain one image for keyframe requests while the display is idle.
+        cached = Some(frame);
     }
 }
 
@@ -508,7 +553,6 @@ impl Encoder {
         let shared = Arc::new(Shared {
             session: Mutex::new(std::ptr::null_mut()),
             output,
-            last_pts: Mutex::new(0.0),
             force_keyframe,
             bitrate: AtomicU64::new(bitrate as u64),
             running: AtomicBool::new(true),
@@ -516,13 +560,18 @@ impl Encoder {
             fps,
         });
         let mut session: VTCompressionSessionRef = std::ptr::null_mut();
-        let status = unsafe {
+        let key = unsafe {
+            CFString::wrap_under_get_rule(kVTVideoEncoderSpecification_EnableLowLatencyRateControl)
+        };
+        let low_latency =
+            CFDictionary::from_CFType_pairs(&[(key, CFBoolean::true_value().as_CFType())]);
+        let mut status = unsafe {
             VTCompressionSessionCreate(
                 std::ptr::null(),
                 width as i32,
                 height as i32,
                 CM_VIDEO_CODEC_TYPE_H264,
-                std::ptr::null(),
+                low_latency.as_CFTypeRef(),
                 std::ptr::null(),
                 std::ptr::null(),
                 Some(output_callback),
@@ -531,6 +580,30 @@ impl Encoder {
             )
         };
         if status != 0 || session.is_null() {
+            // Some macOS/hardware combinations do not provide a low-latency encoder.
+            if !session.is_null() {
+                unsafe {
+                    VTCompressionSessionInvalidate(session);
+                    CFRelease(session);
+                }
+            }
+            session = std::ptr::null_mut();
+            status = unsafe {
+                VTCompressionSessionCreate(
+                    std::ptr::null(),
+                    width as i32,
+                    height as i32,
+                    CM_VIDEO_CODEC_TYPE_H264,
+                    std::ptr::null(),
+                    std::ptr::null(),
+                    std::ptr::null(),
+                    Some(output_callback),
+                    Arc::as_ptr(&shared) as *mut c_void,
+                    &mut session,
+                )
+            };
+        }
+        if status != 0 || session.is_null() {
             return Err(format!("DESKTOP_ENCODER_CREATE_FAILED_{status}"));
         }
 
@@ -538,6 +611,12 @@ impl Encoder {
             CFString::wrap_under_get_rule(kVTProfileLevel_H264_ConstrainedBaseline_AutoLevel)
         };
         set_bool_property(session, unsafe { kVTCompressionPropertyKey_RealTime }, true);
+        // Optional on low-latency encoders, useful for the fallback encoder.
+        set_i32_property(
+            session,
+            unsafe { kVTCompressionPropertyKey_MaxFrameDelayCount },
+            1,
+        );
         set_string_property(
             session,
             unsafe { kVTCompressionPropertyKey_ProfileLevel },
@@ -640,6 +719,52 @@ impl Drop for Encoder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn frame(keyframe: bool) -> EncodedFrame {
+        EncodedFrame {
+            data: Bytes::from_static(&[1]),
+            pts_seconds: 1.0,
+            keyframe,
+            encoded_at: Instant::now(),
+        }
+    }
+
+    #[test]
+    fn overflow_drops_dependent_frames_until_a_new_keyframe() {
+        let force = Arc::new(AtomicBool::new(false));
+        let queue = FrameQueue::new(2, force.clone());
+        queue.push(frame(true));
+        queue.push(frame(false));
+        queue.push(frame(false));
+        assert!(force.swap(false, Ordering::AcqRel));
+        queue.push(frame(false));
+        assert!(queue.inner.lock().unwrap().frames.is_empty());
+        queue.push(frame(true));
+        queue.push(frame(false));
+        let mut inner = queue.inner.lock().unwrap();
+        assert!(inner.frames.pop_front().unwrap().keyframe);
+        assert!(!inner.frames.pop_front().unwrap().keyframe);
+    }
+
+    #[test]
+    fn expiry_at_dequeue_discards_the_gop_and_requests_a_keyframe() {
+        let force = Arc::new(AtomicBool::new(false));
+        let queue = FrameQueue::new(2, force.clone());
+        let mut old = frame(true);
+        old.encoded_at -= Duration::from_millis(100);
+        queue.push(old);
+        assert!(queue.pop(&mut queue.inner.lock().unwrap()).is_none());
+        assert!(force.load(Ordering::Acquire));
+        queue.push(frame(false));
+        assert!(queue.inner.lock().unwrap().frames.is_empty());
+        queue.push(frame(true));
+        assert!(
+            queue
+                .pop(&mut queue.inner.lock().unwrap())
+                .unwrap()
+                .keyframe
+        );
+    }
 
     #[test]
     fn converts_avcc_into_annex_b_and_marks_idr() {

@@ -502,6 +502,14 @@ describe('browser devices and one-hop routing', () => {
     const token = randomToken();
     const phone = await join(a.app, 'iOS', token);
     for (const action of [
+      'desktopRequest',
+      'desktopDisplay',
+      'desktopState',
+      'desktopOffer',
+      'desktopIce',
+      'desktopStop',
+      'desktopKeyboard',
+      'inputConnect',
       'inputEnable',
       'inputRefresh',
       'openDownloads',

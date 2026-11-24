@@ -2,10 +2,11 @@ import { z } from 'zod';
 
 import { peerInfoSchema } from './schemas';
 
-/** Desktop capture defaults. Frames are H.264 at 30 fps and capped at 1080p. */
+/** Desktop capture defaults. Preserve native pixels up to 3840 × 2160. */
 export const DESKTOP_MAX_WIDTH = 3840;
 export const DESKTOP_MAX_HEIGHT = 2160;
 export const DESKTOP_FPS = 30;
+export const desktopFrameRateSchema = z.union([z.literal(30), z.literal(60)]);
 export const DESKTOP_DEFAULT_BITRATE = 4_000_000;
 export const DESKTOP_MIN_BITRATE = 500_000;
 export const DESKTOP_MAX_BITRATE = 32_000_000;
@@ -38,6 +39,7 @@ export interface DesktopSessionView {
   peerId: string;
   peerName: string;
   phase: DesktopPhase;
+  fps?: number;
   controlRequested: boolean;
   control: boolean;
   width: number;
@@ -126,7 +128,34 @@ export const desktopDisplayModeSchema = desktopResolutionSchema.extend({
   pixelWidth: z.number().int().min(1).max(32768).optional(),
   pixelHeight: z.number().int().min(1).max(32768).optional(),
 });
+export const desktopPermissionsSchema = z.object({
+  supported: z.boolean(),
+  available: z.boolean(),
+  screenRecording: z.boolean(),
+  accessibility: z.boolean(),
+  inputMonitoring: z.boolean().optional(),
+});
+
+/** Check each role independently; controllers do not capture their own screen. */
+export function desktopPermissionError(
+  status: z.infer<typeof desktopPermissionsSchema> | undefined,
+  role: DesktopRole,
+): string | undefined {
+  if (!status) return 'DESKTOP_PEER_UPGRADE_REQUIRED';
+  if (role === 'controller') {
+    if (!status.supported) return 'DESKTOP_UNSUPPORTED';
+    if (!status.available) return 'DESKTOP_NATIVE_MISSING';
+    if (!status.accessibility || status.inputMonitoring !== true)
+      return 'DESKTOP_CONTROLLER_INPUT_PERMISSION';
+  } else {
+    if (!status.supported || !status.available) return 'DESKTOP_REMOTE_NATIVE_MISSING';
+    if (!status.screenRecording) return 'DESKTOP_REMOTE_SCREEN_PERMISSION';
+    if (!status.accessibility) return 'DESKTOP_REMOTE_INPUT_PERMISSION';
+  }
+}
+
 export const desktopDisplayModesSchema = z.object({
+  permissions: desktopPermissionsSchema.optional(),
   supported: z.boolean(),
   current: desktopDisplayModeSchema.optional(),
   modes: z.array(desktopDisplayModeSchema).max(256),
@@ -161,6 +190,7 @@ export function fitDesktopResolution(
 }
 
 export const desktopRequestInput = z.object({
+  fps: desktopFrameRateSchema.optional(),
   resolutionChoice: desktopResolutionChoiceSchema.optional(),
   resolution: desktopResolutionSchema.optional(),
   peerId: z.string().min(1).max(64),
@@ -203,6 +233,7 @@ export type DesktopAcceptInput = z.output<typeof desktopAcceptInput>;
 
 /** Peer-to-peer signaling payloads. Room headers bind the sender; the token binds the session. */
 export const desktopPeerRequestSchema = z.object({
+  fps: desktopFrameRateSchema.optional(),
   resolution: desktopResolutionSchema.optional(),
   sessionId: z.string().min(1).max(64),
   from: peerInfoSchema,

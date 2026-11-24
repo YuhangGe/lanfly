@@ -1,5 +1,6 @@
 import {
   DESKTOP_ACCEPT_TTL_MS,
+  desktopPermissionError,
   desktopDisplayModesSchema,
   desktopResolutionPreferenceSchema,
   type DesktopResolutionChoice,
@@ -61,6 +62,7 @@ interface Session {
   width: number;
   height: number;
   bitrate: number;
+  fps: number;
   createdAt: number;
   expiresAt: number;
   nativeStarted: boolean;
@@ -253,11 +255,21 @@ export class DesktopService {
   }
 
   async request(owner: string, input: DesktopRequestInput): Promise<DesktopSessionView> {
+    if (owner !== this.app.identity.id) throwActionError('DESKTOP_LOCAL_ONLY');
+    const localError = desktopPermissionError(this.status(), 'controller');
+    if (localError) throwActionError(localError);
     if (this.#activeSession()) throwActionError(ErrorCodes.DESKTOP_BUSY);
     const target = this.app.network.peers().find((peer) => peer.id === input.peerId);
     if (!target || target.id === this.app.identity.id) throwActionError(ErrorCodes.PEER_NOT_FOUND);
     if (target.kind === 'browser') throwActionError(ErrorCodes.DESKTOP_UNSUPPORTED);
     if (!target.online) throwActionError(ErrorCodes.PEER_OFFLINE);
+    const remoteStatus = await this.app.remote.desktopDisplay(target);
+    const remoteError = desktopPermissionError(remoteStatus.permissions, 'controlled');
+    if (remoteError) throwActionError(remoteError);
+    // The permission query yields; another request may have started in the meantime.
+    if (this.#activeSession()) throwActionError(ErrorCodes.DESKTOP_BUSY);
+    const refreshedError = desktopPermissionError(this.status(), 'controller');
+    if (refreshedError) throwActionError(refreshedError);
     const viewer =
       owner === this.app.identity.id ? undefined : this.app.network.browsers.get(owner)?.info.name;
     const now = Date.now();
@@ -275,6 +287,7 @@ export class DesktopService {
       width: 0,
       height: 0,
       bitrate: input.bitrate ?? this.bitrateFor(target.name),
+      fps: input.fps ?? DESKTOP_FPS,
       createdAt: now,
       expiresAt: now + DESKTOP_REQUEST_TTL_MS,
       nativeStarted: false,
@@ -288,6 +301,7 @@ export class DesktopService {
         control: true,
         viewer,
         bitrate: session.bitrate,
+        fps: session.fps,
         resolution: input.resolution,
       });
       if (accepted.from.id !== session.peerId) {
@@ -300,19 +314,19 @@ export class DesktopService {
       session.width = accepted.width;
       session.height = accepted.height;
       session.expiresAt = Date.now() + DESKTOP_ACCEPT_TTL_MS;
-      if (!accepted.screenRecording) {
-        session.error = ErrorCodes.DESKTOP_PERMISSION;
+      if (!accepted.screenRecording || !accepted.control) {
         await this.app.remote
           .desktopStop(
             this.#target(session),
             {
               sessionId: session.id,
               from: this.app.identity.info,
-              reason: ErrorCodes.DESKTOP_PERMISSION,
+              reason: 'DESKTOP_CONTROL_REQUIRED',
             },
             session.token,
           )
           .catch(() => undefined);
+        throwActionError('DESKTOP_CONTROL_REQUIRED');
       }
       await this.#disableInput();
       await this.#rememberResolution(
@@ -337,8 +351,9 @@ export class DesktopService {
     const session = this.#requireSession(sessionId, 'controlled');
     if (session.phase !== 'pending') throwActionError(ErrorCodes.DESKTOP_STATE);
     const status = this.status();
-    if (!status.available) throwActionError(ErrorCodes.DESKTOP_NATIVE_MISSING);
-    if (!status.screenRecording) throwActionError(ErrorCodes.DESKTOP_PERMISSION);
+    const permissionError = desktopPermissionError(status, 'controlled');
+    if (permissionError) throwActionError(permissionError);
+    if (!control || !session.controlRequested) throwActionError('DESKTOP_CONTROL_REQUIRED');
     if (status.screens < 1) throwActionError(ErrorCodes.DESKTOP_CAPTURE_FAILED);
     await this.#disableInput();
     session.control = control && session.controlRequested;
@@ -381,6 +396,8 @@ export class DesktopService {
   async offer(owner: string, sessionId: string, sdp: string): Promise<DesktopOfferResult> {
     const session = this.#requireSession(sessionId, 'controller');
     this.#assertOwner(session, owner);
+    const permissionError = desktopPermissionError(this.status(), 'controller');
+    if (permissionError) throwActionError(permissionError);
     if (!isActive(session.phase) || session.phase === 'pending')
       throwActionError(ErrorCodes.DESKTOP_STATE);
     if (!session.token) throwActionError(ErrorCodes.DESKTOP_STATE);
@@ -479,10 +496,11 @@ export class DesktopService {
       case 'display': {
         const value = desktopPeerDisplaySchema.parse(payload);
         await this.#verifyPeer(value.from, sourceHost, sourceId, true);
-        const native = this.#requireNative();
-        return native.desktopDisplayModes
+        const native = this.#binding();
+        const modes = native?.desktopDisplayModes
           ? desktopDisplayModesSchema.parse(JSON.parse(native.desktopDisplayModes()))
           : { supported: false, modes: [] };
+        return { ...modes, permissions: this.status() };
       }
       case 'request':
         return this.#peerRequest(payload, sourceHost, sourceId);
@@ -530,6 +548,7 @@ export class DesktopService {
       peerId: session.peerId,
       peerName: session.peerName,
       phase: session.phase,
+      fps: session.fps,
       controlRequested: session.controlRequested,
       control: session.control,
       width: session.width,
@@ -754,6 +773,10 @@ export class DesktopService {
     await this.#verifyPeer(value.from, sourceHost, sourceId, true);
     if (this.#activeSession()) throwActionError(ErrorCodes.DESKTOP_BUSY);
     const status = this.status();
+    const permissionError = desktopPermissionError(status, 'controlled');
+    if (permissionError) throwActionError(permissionError);
+    if (value.control === false) throwActionError('DESKTOP_CONTROL_REQUIRED');
+    if (status.screens < 1) throwActionError(ErrorCodes.DESKTOP_CAPTURE_FAILED);
     if (value.resolution) {
       const native = this.#requireNative();
       const info = native.desktopDisplayModes
@@ -783,6 +806,7 @@ export class DesktopService {
       width: status.display?.width ?? 0,
       height: status.display?.height ?? 0,
       bitrate: value.bitrate ?? DESKTOP_DEFAULT_BITRATE,
+      fps: value.fps ?? DESKTOP_FPS,
       resolution: value.resolution,
       createdAt: now,
       expiresAt: now + DESKTOP_ACCEPT_TTL_MS,
@@ -807,8 +831,11 @@ export class DesktopService {
     const session = this.#requireSession(value.sessionId, 'controller');
     await this.#verifySessionPeer(session, value.from, sourceHost, sourceId);
     if (session.phase !== 'pending') throwActionError(ErrorCodes.DESKTOP_STATE);
+    const permissionError = desktopPermissionError(this.status(), 'controller');
+    if (permissionError) throwActionError(permissionError);
+    if (!value.control) throwActionError('DESKTOP_CONTROL_REQUIRED');
     session.token = value.token;
-    session.control = value.control;
+    session.control = true;
     session.width = value.width;
     session.height = value.height;
     session.phase = 'accepted';
@@ -844,6 +871,11 @@ export class DesktopService {
       session.phase !== 'connected'
     )
       throwActionError(ErrorCodes.DESKTOP_STATE);
+    const permissionError = desktopPermissionError(this.status(), 'controlled');
+    if (permissionError) {
+      this.#finish(session, 'failed', permissionError, true);
+      throwActionError(permissionError);
+    }
     const native = this.#requireNative();
     let started: { width?: number; height?: number } = {};
     try {
@@ -854,7 +886,7 @@ export class DesktopService {
             JSON.stringify({
               maxWidth: DESKTOP_MAX_WIDTH,
               maxHeight: DESKTOP_MAX_HEIGHT,
-              fps: DESKTOP_FPS,
+              fps: session.fps,
               bitrate: session.bitrate,
               resolution: session.resolution,
               // Bind the wildcard so ICE can advertise every LAN interface, not just the

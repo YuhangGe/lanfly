@@ -311,6 +311,16 @@ export class RemoteClient {
       logger.debug(
         `请求 ${target.host}:${target.port}${path} 返回 ${response.status}: ${text.slice(0, 200)}`,
       );
+      if (path.startsWith('/api/v1/peer/desktop/')) {
+        try {
+          const body = JSON.parse(text) as { error?: unknown };
+          if (typeof body.error === 'string' && /^DESKTOP_[A-Z_]+$/.test(body.error)) {
+            throwActionError(body.error);
+          }
+        } catch (error) {
+          if (error && typeof error === 'object' && 'code' in error) throw error;
+        }
+      }
       responseError(response.status);
     }
     try {

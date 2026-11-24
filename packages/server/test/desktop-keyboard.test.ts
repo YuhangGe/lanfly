@@ -120,15 +120,9 @@ describe('focused native desktop keyboard', () => {
       },
     } as unknown as Application;
     const service = new DesktopService(app);
-    const session = await service.request('browser-device', { peerId: 'peer' });
-    const input = {
-      sessionId: session.sessionId,
-      clientId: randomUUID(),
-      revision: 1,
-      active: true,
-    };
-    expect(() => service.keyboard('browser-device', input)).toThrow();
-    expect(() => service.keyboard('host', input)).toThrow();
+    await expect(service.request('browser-device', { peerId: 'peer' })).rejects.toMatchObject({
+      code: 'DESKTOP_LOCAL_ONLY',
+    });
     await service.stop();
   });
 

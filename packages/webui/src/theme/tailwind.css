@@ -131,6 +131,23 @@
   }
 }
 
+/* Keep the arrow inset consistent across platforms and padding utilities. */
+select:not([multiple]):not([size]) {
+  appearance: none;
+  padding-inline-end: 32px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16' fill='none'%3E%3Cpath d='m4 6 4 4 4-4' stroke='%23cccccc' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 16px 16px;
+}
+
+@media (forced-colors: active) {
+  select:not([multiple]):not([size]) {
+    appearance: auto;
+    background-image: none;
+  }
+}
+
 @keyframes lanfly-rise {
   from {
     opacity: 0;
@@ -178,8 +195,7 @@
   background: black;
 }
 
-.desktop-session-view:fullscreen > .desktop-session-details,
-.desktop-session-view:fullscreen .desktop-window-only {
+.desktop-session-view:fullscreen > .desktop-session-details {
   display: none;
 }
 
